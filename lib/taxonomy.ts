@@ -74,8 +74,9 @@ export type Index = {
   n: number;
 };
 
+/** Index/search text: Premade + Keywords only. Never Description/Category/Subcategory. */
 function docText(r: TaxRow) {
-  return `${r.premade} ${r.premade} ${r.category} ${r.subcategory} ${r.keywords} ${r.description}`;
+  return `${r.premade} ${r.premade} ${r.keywords}`;
 }
 
 export function buildIndex(rows: TaxRow[]): Index {

@@ -10,8 +10,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Audience",
-  description: "Audience Define and Audience Find",
+  title: "Drop The Mic",
+  description: "Define your audience. Find your crowd.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

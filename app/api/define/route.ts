@@ -1,51 +1,156 @@
+import type Anthropic from "@anthropic-ai/sdk";
 import { NextResponse } from "next/server";
 import { askJson } from "@/lib/anthropic";
-import { FIELDS, FIELD_BY_KEY } from "@/lib/fields";
+import {
+  DEFAULT_SCHEMA,
+  fieldByKey,
+  normalizeSchema,
+  type FieldSchema,
+} from "@/lib/fields";
+import { DEFAULT_DEFINE_PROMPT, renderPrompt } from "@/lib/prompts";
 import type { ChatMessage, FieldMap, Proposal } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-type Body = { messages: ChatMessage[]; fields: FieldMap };
+type DocumentPayload =
+  | { kind: "text"; name: string; text: string }
+  | { kind: "pdf"; name: string; mediaType: "application/pdf"; data: string }
+  | {
+      kind: "image";
+      name: string;
+      mediaType: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+      data: string;
+    };
+
+type Body = {
+  messages: ChatMessage[];
+  fields: FieldMap;
+  schema?: FieldSchema;
+  prompt?: string;
+  document?: DocumentPayload;
+};
+
 type Reply = { reply: string; proposals: Proposal[] };
 
-function fieldStateText(fields: FieldMap) {
-  return FIELDS.map((f) => {
-    const s = fields[f.key];
-    const path = `${f.category}${f.group ? " / " + f.group : ""} / ${f.label} [${f.key}]`;
-    if (s.status === "confirmed") return `${path} = CONFIRMED: ${s.value}`;
-    if (s.status === "skipped") return `${path} = SKIPPED`;
-    return `${path} = OUTSTANDING${f.optional ? " (optional)" : ""}`;
-  }).join("\n");
+/** Content blocks — includes PDF `document` which older SDK typings omit. */
+type AnyContentBlock =
+  | { type: "text"; text: string }
+  | {
+      type: "image";
+      source: {
+        type: "base64";
+        media_type: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+        data: string;
+      };
+    }
+  | {
+      type: "document";
+      source: {
+        type: "base64";
+        media_type: "application/pdf";
+        data: string;
+      };
+    };
+
+const DOCUMENT_RULE = `
+Document upload turn:
+- The user uploaded a brief or notes instead of typing. Treat the attached document as their description of the offer and audience.
+- Extract every outstanding data point you can from the document as proposals in this turn. Be thorough — prefer filling many fields from one document over asking follow-up questions first.
+- Mark uncertain or extrapolated values with "inferred": true.
+- In "reply", briefly say what you pulled out and ask only about what is still clearly missing. Do not restate every proposed value.`;
+
+function documentBlocks(doc: DocumentPayload): AnyContentBlock[] {
+  const intro: AnyContentBlock = {
+    type: "text",
+    text: `I uploaded a document (${doc.name}) with my audience / offer notes. Please scan it and fill in every data point you can.`,
+  };
+
+  if (doc.kind === "text") {
+    return [
+      intro,
+      {
+        type: "text",
+        text: `--- Document: ${doc.name} ---\n${doc.text}\n--- End document ---`,
+      },
+    ];
+  }
+
+  if (doc.kind === "pdf") {
+    return [
+      {
+        type: "document",
+        source: {
+          type: "base64",
+          media_type: doc.mediaType,
+          data: doc.data,
+        },
+      },
+      intro,
+    ];
+  }
+
+  return [
+    {
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: doc.mediaType,
+        data: doc.data,
+      },
+    },
+    intro,
+  ];
+}
+
+function toHistory(
+  messages: ChatMessage[],
+  document?: DocumentPayload
+): Anthropic.MessageParam[] {
+  if (!messages.length) {
+    return [{ role: "user", content: "Begin the intake." }];
+  }
+
+  if (!document) {
+    return messages.map((m) => ({ role: m.role, content: m.content }));
+  }
+
+  const prior = messages.slice(0, -1).map((m) => ({
+    role: m.role,
+    content: m.content,
+  }));
+
+  // Cast: SDK 0.27 typings lack `document` blocks; the Messages API accepts them.
+  return [
+    ...prior,
+    {
+      role: "user" as const,
+      content: documentBlocks(document) as Anthropic.MessageParam["content"],
+    },
+  ];
 }
 
 export async function POST(req: Request) {
   try {
-    const { messages, fields } = (await req.json()) as Body;
+    const body = (await req.json()) as Body;
+    const { fields } = body;
+    const messages = Array.isArray(body.messages) ? body.messages : [];
+    const schema = normalizeSchema(body.schema) || DEFAULT_SCHEMA;
+    const byKey = fieldByKey(schema);
+    const keys = schema.fields.map((f) => f.key);
+    const template =
+      typeof body.prompt === "string" && body.prompt.trim()
+        ? body.prompt
+        : DEFAULT_DEFINE_PROMPT;
+    let system = renderPrompt(template, { schema, fields });
+    if (body.document) system = `${system}\n${DOCUMENT_RULE}`;
 
-    const system = `You are an intake assistant collecting target-market data for an audience definition.
-
-"The Lead" is a persona / ideal customer profile, not one named individual. Ask about the archetype: the kind of company and the kind of person who buys this. Job title, department, authority, industry, size, tech stack, pain points and triggers describe a segment, not a specific human.
-
-Data points to collect, with current state:
-${fieldStateText(fields)}
-
-Rules:
-- Work through OUTSTANDING data points in the order listed. Ask about one to three closely related data points per turn. Keep questions short and plain.
-- The two name data points are optional and exist only to sharpen the personalized hook. Ask for them once, at most, as a representative or example account. If the user has no specific one in mind, propose nothing for them and move on immediately. Never block on a name.
-- Read the user's latest message and extract every data point value you can, as proposals.
-- Extrapolate when the user cannot answer or gives partial information, using what is already confirmed plus general knowledge. Mark extrapolated values with "inferred": true. If a data point cannot be reasonably extrapolated, do not propose it; move on and ask about the next one.
-- Never propose a value for a data point that is already CONFIRMED unless the user explicitly changes it.
-- Values are short strings: one line, at most about 25 words. No markdown, no bullet points.
-- Do not congratulate, do not add commentary, do not explain your process. Be direct.
-- If all data points are settled, your reply should just say the definition is complete.
-
-Respond by calling the "respond" tool. "reply" is your next message to the user. "proposals" holds any data-point values you extracted or inferred this turn.
-Valid field keys: ${FIELDS.map((f) => f.key).join(", ")}`;
+    const history = toHistory(messages, body.document);
+    const maxTokens = body.document ? 2500 : 1500;
 
     const data = await askJson<Reply>(
       system,
-      messages.map((m) => ({ role: m.role, content: m.content })),
+      history,
       {
         type: "object",
         properties: {
@@ -55,7 +160,7 @@ Valid field keys: ${FIELDS.map((f) => f.key).join(", ")}`;
             items: {
               type: "object",
               properties: {
-                key: { type: "string", enum: FIELDS.map((f) => f.key) },
+                key: { type: "string", enum: keys },
                 value: { type: "string" },
                 inferred: { type: "boolean" },
               },
@@ -64,11 +169,12 @@ Valid field keys: ${FIELDS.map((f) => f.key).join(", ")}`;
           },
         },
         required: ["reply", "proposals"],
-      }
+      },
+      { maxTokens }
     );
 
     const proposals = (data.proposals || []).filter(
-      (p) => p && FIELD_BY_KEY[p.key] && String(p.value || "").trim()
+      (p) => p && byKey[p.key] && String(p.value || "").trim()
     );
 
     return NextResponse.json({ reply: data.reply || "", proposals });

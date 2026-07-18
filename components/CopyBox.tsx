@@ -24,7 +24,7 @@ export default function CopyBox({
       <textarea
         readOnly
         value={value}
-        className={`scroll-thin w-full resize-none rounded-lg border border-line bg-soft p-3 font-sans ${height}`}
+        className={`scroll-thin w-full resize-none rounded-lg border border-line bg-white p-3 text-ink leading-relaxed ${height}`}
       />
       <div>
         <button

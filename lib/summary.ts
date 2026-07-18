@@ -1,31 +1,114 @@
-import { buildSummary } from "./fields";
-import type { FieldMap, SavedAudience } from "./types";
+import { buildSummary, type FieldSchema } from "./fields";
+import { materialsLinksList } from "./letter";
+import type {
+  FieldMap,
+  LetterResult,
+  ProjectLetter,
+  SavedAudience,
+  TierPlan,
+} from "./types";
+
+function formatTierPlan(plan: TierPlan) {
+  const lines: string[] = [
+    "Tier plan",
+    "",
+    `${plan.silver.name}`,
+    `  Membership: ${plan.silver.rule}`,
+    `  Treatment: ${plan.silver.treatment}`,
+    "",
+    `${plan.gold.name}`,
+    `  Membership: ${plan.gold.rule}`,
+    `  Treatment: ${plan.gold.treatment}`,
+  ];
+
+  if (plan.combinations.length) {
+    lines.push("  Strongest combinations:");
+    for (const pair of plan.combinations) {
+      lines.push(`    ${pair.a} × ${pair.b}`);
+    }
+  }
+
+  lines.push(
+    "",
+    `${plan.diamond.name}`,
+    `  Membership: ${plan.diamond.rule}`,
+    `  Treatment: ${plan.diamond.treatment}`
+  );
+  if (plan.diamond.note) {
+    lines.push(`  ${plan.diamond.note}`);
+  }
+
+  lines.push(
+    "",
+    "TAXONOMY IDS (for audience pull)",
+    ...plan.taxonomyIds.map((id) => `  ${id}`)
+  );
+
+  return lines.join("\n");
+}
 
 export function buildAudienceSummary(audience: SavedAudience | null) {
-  if (!audience) return "";
-  const r = audience.row;
-  return [
-    "MATCHED AUDIENCE",
-    `  Premade: ${r.premade}`,
-    `  Taxonomy ID: ${r.id}`,
-    `  Category: ${r.category}`,
-    `  Subcategory: ${r.subcategory}`,
-    `  Audience Type: ${r.type}`,
-    `  Confidence: ${audience.confidence}`,
-    `  Rationale: ${audience.why}`,
+  if (!audience || !audience.basket.length) return "";
+
+  const lines: string[] = [
+    "MATCHED AUDIENCE BASKET",
+    `  Size: ${audience.basket.length}`,
     "",
-    "  Description:",
-    `    ${r.description}`,
+  ];
+
+  audience.basket.forEach((item, i) => {
+    const r = item.row;
+    lines.push(
+      `${i + 1}. ${r.premade}`,
+      `  Taxonomy ID: ${r.id}`,
+      `  Role: ${item.role}`,
+      `  Confidence: ${item.confidence}`,
+      `  Rationale: ${item.why}`,
+      `  Category: ${r.category} › ${r.subcategory} · ${r.type}`,
+      ""
+    );
+  });
+
+  lines.push(formatTierPlan(audience.tierPlan));
+  return lines.join("\n");
+}
+
+export function buildLetterCopyAll(result: LetterResult) {
+  const blocks: string[] = [];
+  for (const tier of result.tiers) {
+    blocks.push(tier.tier, `Style: ${result.style}`, "");
+    tier.emails.forEach((email, i) => {
+      blocks.push(
+        `Email ${i + 1} · Campaign Day ${email.day}`,
+        `Subject: ${email.subject}`,
+        "",
+        email.body,
+        ""
+      );
+    });
+  }
+  if (result.note) blocks.push(result.note);
+  return blocks.join("\n").trim();
+}
+
+export function buildLetterSummary(letter: ProjectLetter | null) {
+  if (!letter?.result) return "";
+  const links = materialsLinksList(letter.materials.links);
+  const lines = [
+    `Approach style: ${letter.result.style}`,
+    links.length ? `Materials links: ${links.join(", ")}` : "Materials links: (none)",
     "",
-    "  Keywords:",
-    `    ${r.keywords}`,
-  ].join("\n");
+    buildLetterCopyAll(letter.result),
+  ];
+  return lines.join("\n");
 }
 
 export function buildProjectSummary(
   name: string,
   fields: FieldMap,
-  audience: SavedAudience | null
+  audience: SavedAudience | null,
+  schema?: FieldSchema,
+  letter?: ProjectLetter | null
 ) {
   const parts = [
     `PROJECT: ${name}`,
@@ -35,13 +118,65 @@ export function buildProjectSummary(
     "AUDIENCE DEFINE",
     "════════════════════════════════",
     "",
-    buildSummary(fields),
+    buildSummary(fields, schema),
     "",
     "════════════════════════════════",
     "AUDIENCE FIND",
     "════════════════════════════════",
     "",
-    audience ? buildAudienceSummary(audience) : "No audience confirmed.",
+    audience ? buildAudienceSummary(audience) : "No audience basket confirmed.",
+    "",
+    "════════════════════════════════",
+    "AUDIENCE LETTER",
+    "════════════════════════════════",
+    "",
+    letter?.result ? buildLetterSummary(letter) : "No letter sequences generated.",
   ];
   return parts.join("\n");
+}
+
+/** Full pull-ready kit for download. */
+export function buildAudienceKit(
+  name: string,
+  fields: FieldMap,
+  audience: SavedAudience,
+  letter: ProjectLetter,
+  schema?: FieldSchema
+) {
+  const links = materialsLinksList(letter.materials.links);
+  const materialsLine = links.length
+    ? `Materials: ${links.join(", ")}`
+    : "Materials: (none)";
+
+  const parts = [
+    `# ${name} — Audience Kit`,
+    "",
+    `Generated: ${new Date().toLocaleString()}`,
+    letter.result ? `Approach style: ${letter.result.style}` : "",
+    materialsLine,
+    "",
+    "## Audience Define",
+    "",
+    buildSummary(fields, schema),
+    "",
+    "## Audience Find",
+    "",
+    buildAudienceSummary(audience),
+    "",
+    "## Audience Letter",
+    "",
+  ];
+
+  if (!letter.result) {
+    parts.push("No letter sequences generated.");
+  } else {
+    parts.push(
+      `Style: ${letter.result.style}`,
+      "Schedule: Email 1 → Campaign Day 1 · Email 2 → Campaign Day 5 · Email 3 → Campaign Day 10 (Mon–Fri)",
+      "",
+      buildLetterCopyAll(letter.result)
+    );
+  }
+
+  return parts.filter((line, i, arr) => !(line === "" && arr[i - 1] === "")).join("\n");
 }

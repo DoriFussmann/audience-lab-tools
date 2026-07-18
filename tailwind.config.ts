@@ -13,6 +13,7 @@ const config: Config = {
         muted: "#8a8a8a",
         soft: "#fafafa",
         accent: "#2f5eff",
+        check: "#6a9a78",
       },
     },
   },

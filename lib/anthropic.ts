@@ -39,7 +39,8 @@ export function extractJson<T>(text: string): T | null {
 export async function askJson<T>(
   system: string,
   messages: Anthropic.MessageParam[],
-  schema?: Record<string, unknown>
+  schema?: Record<string, unknown>,
+  opts?: { maxTokens?: number }
 ): Promise<T> {
   const tool: Anthropic.Tool = {
     name: "respond",
@@ -52,7 +53,7 @@ export async function askJson<T>(
 
   const res = await getClient().messages.create({
     model: MODEL,
-    max_tokens: 1500,
+    max_tokens: opts?.maxTokens ?? 1500,
     system,
     messages,
     tools: [tool],

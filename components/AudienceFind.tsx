@@ -1,15 +1,261 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Chat from "./Chat";
 import CopyBox from "./CopyBox";
 import Proposals from "./Proposals";
-import { FIELD_BY_KEY, searchQueryFromFields } from "@/lib/fields";
-import { search, type Index } from "@/lib/taxonomy";
+import type { FieldSchema } from "@/lib/fields";
+import {
+  AUDIENCE_ROLES,
+  buildTierPlan,
+  nextBestForRole,
+  retrieveByRole,
+  type RoleCandidates,
+} from "@/lib/match";
 import { buildAudienceSummary } from "@/lib/summary";
-import type { ChatMessage, FieldMap, Match, Proposal, SavedAudience, TaxRow } from "@/lib/types";
+import type {
+  AudienceRole,
+  BasketItem,
+  ChatMessage,
+  FieldMap,
+  Match,
+  Proposal,
+  SavedAudience,
+  TaxRow,
+  TierInfo,
+  TierPlan,
+} from "@/lib/types";
 
-const CANDIDATE_COUNT = 40;
+function BasketBar({
+  item,
+  index,
+  animate,
+  expanded,
+  onToggle,
+}: {
+  item: BasketItem;
+  index: number;
+  animate: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const row = item.row;
+  return (
+    <div
+      className={`border border-line ${animate ? "basket-bar-enter" : ""}`}
+      style={animate ? { animationDelay: `${index * 80}ms` } : undefined}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left"
+      >
+        <span className="min-w-0 truncate text-ink">{row.premade}</span>
+        <span className="shrink-0 text-muted">
+          {item.role} · {item.confidence}
+        </span>
+      </button>
+      <div className={`expand-panel ${expanded ? "open" : ""}`}>
+        <div className="expand-panel-inner">
+          <div className="flex flex-col gap-1.5 border-t border-line px-3 py-3 text-muted">
+            <div>{row.id}</div>
+            <div>{item.role}</div>
+            <div>{item.confidence}</div>
+            <div>{item.why}</div>
+            <div>Premade Keywords · {row.keywords || "—"}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BasketSection({
+  basket,
+  onClear,
+}: {
+  basket: BasketItem[];
+  onClear?: () => void;
+}) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [animate, setAnimate] = useState(true);
+
+  useEffect(() => {
+    const ms = basket.length * 80 + 400;
+    const t = window.setTimeout(() => setAnimate(false), ms);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-muted">Basket · {basket.length} audiences</div>
+        {onClear && (
+          <button
+            type="button"
+            onClick={onClear}
+            className="rounded border border-line px-2 py-1 text-muted hover:text-ink"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+      <div className="flex flex-col gap-1.5">
+        {basket.map((item, index) => (
+          <BasketBar
+            key={item.row.id}
+            item={item}
+            index={index}
+            animate={animate}
+            expanded={expandedId === item.row.id}
+            onToggle={() =>
+              setExpandedId((prev) => (prev === item.row.id ? null : item.row.id))
+            }
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TierPanel({
+  header,
+  open,
+  onToggle,
+  children,
+  className = "",
+}: {
+  header: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={`border border-line ${className}`}>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full px-3 py-2.5 text-left text-ink"
+      >
+        {header}
+      </button>
+      <div className={`expand-panel ${open ? "open" : ""}`}>
+        <div className="expand-panel-inner">
+          <div className="flex flex-col gap-2 border-t border-line px-3 py-3 text-muted">
+            {children}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function tierHeader(tier: TierInfo) {
+  return `${tier.name} · ${tier.subtitle}`;
+}
+
+function TierSection({ plan }: { plan: TierPlan }) {
+  const [open, setOpen] = useState({ silver: false, gold: false, diamond: false });
+
+  function toggle(key: keyof typeof open) {
+    setOpen((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <TierPanel
+        header={tierHeader(plan.silver)}
+        open={open.silver}
+        onToggle={() => toggle("silver")}
+      >
+        <div>{plan.silver.rule}</div>
+        <div>{plan.silver.treatment}</div>
+      </TierPanel>
+
+      <div className="ml-5 flex flex-col gap-2">
+        <TierPanel
+          header={tierHeader(plan.gold)}
+          open={open.gold}
+          onToggle={() => toggle("gold")}
+        >
+          <div>{plan.gold.rule}</div>
+          <div>{plan.gold.treatment}</div>
+          {plan.combinations.length > 0 && (
+            <div className="mt-1 flex flex-col gap-1.5">
+              <div className="text-ink">Strongest combinations</div>
+              {plan.combinations.map((pair) => (
+                <div key={`${pair.a}×${pair.b}`}>
+                  {pair.a} × {pair.b}
+                </div>
+              ))}
+            </div>
+          )}
+        </TierPanel>
+
+        <div className="ml-5">
+          <TierPanel
+            header={tierHeader(plan.diamond)}
+            open={open.diamond}
+            onToggle={() => toggle("diamond")}
+          >
+            <div>{plan.diamond.rule}</div>
+            <div>{plan.diamond.treatment}</div>
+            {plan.diamond.note && <div>{plan.diamond.note}</div>}
+          </TierPanel>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmedResults({
+  audience,
+  onClear,
+}: {
+  audience: SavedAudience;
+  onClear: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-8">
+      <BasketSection basket={audience.basket} onClear={onClear} />
+      <TierSection plan={audience.tierPlan} />
+      <CopyBox value={buildAudienceSummary(audience)} />
+    </div>
+  );
+}
+
+function BasketRow({
+  item,
+  onReject,
+}: {
+  item: BasketItem | { row: TaxRow; why: string; confidence: string; role: AudienceRole };
+  onReject?: () => void;
+}) {
+  const row = item.row;
+  return (
+    <div className="flex flex-col gap-1 rounded-lg border border-line p-3">
+      <div className="flex items-center justify-between gap-2">
+        <span>{row.premade}</span>
+        <span className="text-muted">{item.confidence}</span>
+      </div>
+      <div className="text-muted">
+        role:{item.role} · {row.category} › {row.subcategory} · {row.type} · {row.id}
+      </div>
+      <div className="text-muted">{item.why}</div>
+      {onReject && (
+        <div className="pt-1">
+          <button
+            onClick={onReject}
+            className="rounded border border-line px-2 py-1 text-muted hover:text-ink"
+          >
+            Reject
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function AudienceFind({
   fields,
@@ -17,31 +263,31 @@ export default function AudienceFind({
   messages,
   setMessages,
   rows,
-  index,
   taxonomyName,
-  loadingTaxonomy,
-  onFile,
   audience,
   setAudience,
+  schema,
+  prompt,
 }: {
   fields: FieldMap;
   applyProposal: (key: string, value: string, inferred: boolean) => void;
   messages: ChatMessage[];
   setMessages: (updater: (prev: ChatMessage[]) => ChatMessage[]) => void;
   rows: TaxRow[];
-  index: Index | null;
   taxonomyName: string;
-  loadingTaxonomy: boolean;
-  onFile: (file: File) => void;
   audience: SavedAudience | null;
   setAudience: (a: SavedAudience | null) => void;
+  schema: FieldSchema;
+  prompt: string;
 }) {
-  const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [matches, setMatches] = useState<Match[]>([]);
   const [pending, setPending] = useState<Proposal[]>([]);
   const [typeFilter, setTypeFilter] = useState("All");
+  /** Proposed basket before confirm (resolved rows). */
+  const [proposed, setProposed] = useState<BasketItem[]>([]);
+  /** Stage-1 pool kept for reject → next-best. */
+  const [stage1, setStage1] = useState<RoleCandidates | null>(null);
 
   const rowById = useMemo(() => {
     const m = new Map<string, TaxRow>();
@@ -49,31 +295,66 @@ export default function AudienceFind({
     return m;
   }, [rows]);
 
-  const ready = rows.length > 0 && !!index;
+  const ready = rows.length > 0;
 
-  function candidates(extra: string) {
-    if (!index) return [];
-    const query = `${searchQueryFromFields(fields)} ${extra}`.trim();
-    return search(index, rows, query, CANDIDATE_COUNT, typeFilter).map((r) => r.row);
+  const resultsKey = audience
+    ? audience.tierPlan.taxonomyIds.join(",")
+    : "";
+
+  function buildCandidatesByRole() {
+    const byRole = retrieveByRole(rows, fields, typeFilter);
+    const payload: Partial<Record<AudienceRole, TaxRow[]>> = {};
+    let total = 0;
+    for (const role of AUDIENCE_ROLES) {
+      const list = (byRole[role] || []).map((c) => c.row);
+      if (list.length) {
+        payload[role] = list;
+        total += list.length;
+      }
+    }
+    return { byRole, payload, total };
   }
 
-  async function call(history: ChatMessage[], extraQuery: string) {
+  async function call(history: ChatMessage[]) {
     setBusy(true);
     setError("");
     try {
-      const cands = candidates(extraQuery);
-      if (!cands.length) throw new Error("No candidates matched. Add more data points.");
+      const { byRole, payload, total } = buildCandidatesByRole();
+      if (!total) throw new Error("No candidates matched. Confirm Journey fields (pain, category, competitor, adjacent, stage).");
+      setStage1(byRole);
+
       const res = await fetch("/api/find", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history, fields, candidates: cands }),
+        body: JSON.stringify({
+          messages: history,
+          fields,
+          candidatesByRole: payload,
+          schema,
+          prompt,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Request failed");
       if (data.reply) {
         setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
       }
-      setMatches(data.matches || []);
+
+      const nextMatches: Match[] = data.matches || [];
+      const basket: BasketItem[] = [];
+      for (const m of nextMatches) {
+        const row = rowById.get(m.id);
+        if (!row) continue;
+        basket.push({
+          row,
+          why: m.why,
+          confidence: m.confidence,
+          role: m.role,
+        });
+      }
+      setProposed(basket);
+      setAudience(null);
+
       setPending(
         (data.proposals as Proposal[]).filter(
           (p) => fields[p.key] && fields[p.key].value.trim() !== p.value.trim()
@@ -88,32 +369,77 @@ export default function AudienceFind({
 
   function run() {
     setMessages(() => []);
-    call([], "");
+    setProposed([]);
+    setAudience(null);
+    call([]);
   }
 
   function send(text: string) {
     const history: ChatMessage[] = [...messages, { role: "user", content: text }];
     setMessages(() => history);
     setPending([]);
-    call(history, text);
+    call(history);
   }
 
-  function confirmMatch(m: Match) {
-    const row = rowById.get(m.id);
-    if (!row) return;
-    setAudience({ row, why: m.why, confidence: m.confidence });
-    setMatches([]);
+  function confirmBasket() {
+    if (!proposed.length) return;
+    const saved: SavedAudience = {
+      basket: proposed,
+      tierPlan: buildTierPlan(proposed),
+    };
+    setAudience(saved);
     setMessages((prev) => [
       ...prev,
-      { role: "user", content: `Confirmed audience: ${row.premade} (${row.id}).` },
+      {
+        role: "user",
+        content: `Confirmed basket of ${proposed.length}: ${proposed.map((b) => b.row.id).join(", ")}.`,
+      },
     ]);
   }
+
+  function stage1Pool(): RoleCandidates {
+    return stage1 || retrieveByRole(rows, fields, typeFilter);
+  }
+
+  function rejectFromProposed(id: string) {
+    const pool = stage1Pool();
+    if (!stage1) setStage1(pool);
+    const current = proposed.find((b) => b.row.id === id);
+    if (!current) return;
+    const exclude = new Set(proposed.map((b) => b.row.id));
+    const replacement = nextBestForRole(pool, current.role, exclude);
+    setProposed((prev) => {
+      const without = prev.filter((b) => b.row.id !== id);
+      if (!replacement) return without;
+      return [
+        ...without,
+        {
+          row: replacement.row,
+          why: `Next-best ${current.role} candidate from Stage-1 retrieval.`,
+          confidence: "medium" as const,
+          role: current.role,
+        },
+      ];
+    });
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "assistant",
+        content: replacement
+          ? `Rejected ${current.row.premade}. Offering next-best for ${current.role}: ${replacement.row.premade} (${replacement.row.id}).`
+          : `Rejected ${current.row.premade}. No further Stage-1 candidates for ${current.role}.`,
+      },
+    ]);
+  }
+
+  const showProposal = !audience && proposed.length > 0;
 
   const footer = (
     <>
       {error && <div className="text-accent">{error}</div>}
       <Proposals
         proposals={pending}
+        schema={schema}
         onConfirm={(p, value) => {
           applyProposal(p.key, value, !!p.inferred);
           setPending(pending.filter((x) => x.key !== p.key));
@@ -124,153 +450,74 @@ export default function AudienceFind({
           setPending([]);
         }}
       />
+
       {audience && (
-        <div className="flex flex-col gap-2 rounded-lg border border-line p-3">
-          <div>Audience Find complete. Audience confirmed.</div>
-          <CopyBox value={buildAudienceSummary(audience)} />
-        </div>
+        <ConfirmedResults
+          key={resultsKey}
+          audience={audience}
+          onClear={() => {
+            setAudience(null);
+            setProposed([]);
+          }}
+        />
       )}
-      {matches.length > 0 && (
+
+      {showProposal && (
         <div className="flex flex-col gap-2">
-          {matches.map((m) => {
-            const row = rowById.get(m.id);
-            if (!row) return null;
-            return (
-              <div key={m.id} className="flex flex-col gap-1 rounded-lg border border-line p-3">
-                <div className="flex items-center justify-between">
-                  <span>{row.premade}</span>
-                  <span className="text-muted">{m.confidence}</span>
-                </div>
-                <div className="text-muted">
-                  {row.category} › {row.subcategory} · {row.type} · {row.id}
-                </div>
-                <div className="text-muted">{m.why}</div>
-                <div className="pt-1">
-                  <button
-                    onClick={() => confirmMatch(m)}
-                    className="rounded border border-line px-2 py-1 text-muted hover:text-ink"
-                  >
-                    Confirm
-                  </button>
-                </div>
-              </div>
-            );
-          })}
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-ink">Proposed basket · {proposed.length}</span>
+            <button
+              onClick={confirmBasket}
+              className="rounded border border-line px-3 py-1.5 text-muted hover:text-ink"
+            >
+              Confirm basket
+            </button>
+          </div>
+          {proposed.map((item) => (
+            <BasketRow key={item.row.id} item={item} onReject={() => rejectFromProposed(item.row.id)} />
+          ))}
         </div>
       )}
     </>
   );
 
   return (
-    <div className="flex h-full min-h-0">
-      <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex items-center gap-3 border-b border-line px-6 py-3">
-          <div
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragging(false);
-              const f = e.dataTransfer.files?.[0];
-              if (f) onFile(f);
-            }}
-            className={
-              "flex flex-1 items-center justify-center rounded-lg border border-dashed px-4 py-3 " +
-              (dragging ? "border-accent bg-soft" : "border-line")
-            }
-          >
-            <label className="cursor-pointer text-muted">
-              {loadingTaxonomy
-                ? "Loading taxonomy…"
-                : ready
-                ? `${taxonomyName} · ${rows.length.toLocaleString()} audiences · drop to replace`
-                : "Drag & drop taxonomy file"}
-              <input
-                type="file"
-                accept=".xlsx,.xls,.csv"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) onFile(f);
-                }}
-              />
-            </label>
-          </div>
-
-          <select
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
-            className="rounded-lg border border-line px-2 py-2 text-muted"
-          >
-            <option value="All">All</option>
-            <option value="B2B">B2B</option>
-            <option value="B2C">B2C</option>
-          </select>
-
-          <button
-            onClick={run}
-            disabled={!ready || busy}
-            className="rounded-lg border border-line px-3 py-2 text-muted hover:text-ink disabled:opacity-40"
-          >
-            Submit
-          </button>
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex items-center gap-3 border-b border-line px-6 py-3">
+        <div className="flex-1 text-muted">
+          {ready
+            ? `${taxonomyName} · ${rows.length.toLocaleString()} audiences`
+            : "No taxonomy loaded — set the file source in Admin"}
         </div>
 
-        <div className="min-h-0 flex-1">
-          <Chat
-            messages={messages}
-            busy={busy}
-            disabled={!ready}
-            placeholder={ready ? "Message" : "Upload a taxonomy to start"}
-            onSend={send}
-            footer={footer}
-          />
-        </div>
+        <select
+          value={typeFilter}
+          onChange={(e) => setTypeFilter(e.target.value)}
+          className="rounded-lg border border-line px-2 py-2 text-muted"
+        >
+          <option value="All">All</option>
+          <option value="B2B">B2B</option>
+          <option value="B2C">B2C</option>
+        </select>
+
+        <button
+          onClick={run}
+          disabled={!ready || busy}
+          className="rounded-lg border border-line px-3 py-2 text-muted hover:text-ink disabled:opacity-40"
+        >
+          Submit
+        </button>
       </div>
 
-      <div className="scroll-thin w-[340px] shrink-0 overflow-y-auto border-l border-line p-5">
-        <div className="pb-4 text-muted">Audience</div>
-
-        {!audience && <div className="text-muted">No audience confirmed.</div>}
-
-        {audience && (
-          <div className="flex flex-col gap-4">
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <span>{audience.row.premade}</span>
-                <span className="text-accent">Confirmed</span>
-              </div>
-              <div className="flex flex-col gap-2 border-t border-line pt-2">
-                {[
-                  ["Taxonomy ID", audience.row.id],
-                  ["Category", audience.row.category],
-                  ["Subcategory", audience.row.subcategory],
-                  ["Audience Type", audience.row.type],
-                  ["Confidence", String(audience.confidence)],
-                  ["Rationale", audience.why],
-                  ["Description", audience.row.description],
-                  ["Keywords", audience.row.keywords],
-                ].map(([label, value]) => (
-                  <div key={label} className="flex flex-col">
-                    <span className="text-ink">{label}</span>
-                    <span className="break-words text-muted">{value || "—"}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div>
-              <button
-                onClick={() => setAudience(null)}
-                className="rounded border border-line px-2 py-1 text-muted hover:text-ink"
-              >
-                Clear
-              </button>
-            </div>
-          </div>
-        )}
+      <div className="min-h-0 flex-1">
+        <Chat
+          messages={messages}
+          busy={busy}
+          disabled={!ready}
+          placeholder={ready ? "Message" : "Set taxonomy in Admin to start"}
+          onSend={send}
+          footer={footer}
+        />
       </div>
     </div>
   );

@@ -1,21 +1,24 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { FIELD_BY_KEY } from "@/lib/fields";
+import { fieldByKey, type FieldSchema } from "@/lib/fields";
 import type { Proposal } from "@/lib/types";
 
 export default function Proposals({
   proposals,
+  schema,
   onConfirm,
   onSkip,
   onConfirmAll,
 }: {
   proposals: Proposal[];
+  schema: FieldSchema;
   onConfirm: (p: Proposal, value: string) => void;
   onSkip: (p: Proposal) => void;
   onConfirmAll: (values: Record<string, string>) => void;
 }) {
   const [values, setValues] = useState<Record<string, string>>({});
+  const byKey = fieldByKey(schema);
 
   useEffect(() => {
     const next: Record<string, string> = {};
@@ -28,7 +31,8 @@ export default function Proposals({
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-line p-3">
       {proposals.map((p) => {
-        const def = FIELD_BY_KEY[p.key];
+        const def = byKey[p.key];
+        if (!def) return null;
         return (
           <div key={p.key} className="flex flex-col gap-1">
             <div className="flex items-center gap-2 text-muted">

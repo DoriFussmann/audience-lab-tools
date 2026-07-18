@@ -29,16 +29,87 @@ export type TaxRow = {
   type: string;
 };
 
+/** Journey roles used for per-role taxonomy retrieval and basket composition. */
+export type AudienceRole = "pain" | "category" | "competitor" | "adjacent" | "stage";
+
+export type MatchConfidence = "high" | "medium" | "low";
+
 export type Match = {
   id: string;
   why: string;
-  confidence: number;
+  confidence: MatchConfidence;
+  role: AudienceRole;
+};
+
+export type BasketItem = {
+  row: TaxRow;
+  why: string;
+  confidence: MatchConfidence;
+  role: AudienceRole;
+};
+
+export type TierInfo = {
+  name: string;
+  subtitle: string;
+  rule: string;
+  treatment: string;
+  /** Minimum audience membership count for this tier. */
+  threshold: number;
+  /** Optional extra line shown under treatment (e.g. Diamond scarcity note). */
+  note?: string;
+};
+
+/** Premade-name pair for Gold “Strongest combinations”. */
+export type TierCombination = {
+  a: string;
+  b: string;
+};
+
+export type TierPlan = {
+  n: number;
+  silver: TierInfo;
+  gold: TierInfo;
+  diamond: TierInfo;
+  /** Competitor/brand × pain/category pairs, capped at 5. */
+  combinations: TierCombination[];
+  taxonomyIds: string[];
 };
 
 export type SavedAudience = {
-  row: TaxRow;
-  why: string;
-  confidence: number;
+  basket: BasketItem[];
+  tierPlan: TierPlan;
+};
+
+export type ApproachStyle = "Direct" | "Consultative" | "Challenger" | "Warm";
+
+export type LetterEmail = {
+  day: number;
+  subject: string;
+  body: string;
+};
+
+export type LetterTierName = "Silver" | "Gold" | "Diamond";
+
+export type LetterTierSequence = {
+  tier: LetterTierName;
+  emails: LetterEmail[];
+};
+
+export type LetterResult = {
+  tiers: LetterTierSequence[];
+  note: string;
+  style: ApproachStyle;
+};
+
+export type LetterMaterials = {
+  links: string;
+  snippets: string;
+};
+
+export type ProjectLetter = {
+  materials: LetterMaterials;
+  style: ApproachStyle;
+  result: LetterResult | null;
 };
 
 export type Project = {
@@ -55,4 +126,5 @@ export type Project = {
     audience: SavedAudience | null;
     taxonomyName: string;
   };
+  letter: ProjectLetter;
 };

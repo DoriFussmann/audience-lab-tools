@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { CATEGORIES, categoryDone, categoryFields } from "@/lib/fields";
+import { categoryDone, categoryFields, type FieldSchema } from "@/lib/fields";
 import type { FieldMap } from "@/lib/types";
 
 function Chevron({ open }: { open: boolean }) {
@@ -29,7 +29,7 @@ function Mark({ status }: { status: string }) {
       className={
         "mt-[3px] flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] border text-[9px] " +
         (status === "confirmed"
-          ? "border-ink bg-ink text-white"
+          ? "border-check bg-check text-white"
           : status === "skipped"
           ? "border-line bg-soft text-muted"
           : "border-line text-transparent")
@@ -40,14 +40,20 @@ function Mark({ status }: { status: string }) {
   );
 }
 
-export default function DataPanel({ fields }: { fields: FieldMap }) {
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+export default function DataPanel({
+  fields,
+  schema,
+}: {
+  fields: FieldMap;
+  schema: FieldSchema;
+}) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   return (
     <div className="flex flex-col gap-3">
-      {CATEGORIES.map((cat) => {
-        const done = categoryDone(fields, cat.id);
-        const open = !collapsed[cat.id];
+      {schema.categories.map((cat) => {
+        const done = categoryDone(fields, schema, cat.id);
+        const open = !!expanded[cat.id];
         let currentGroup: string | null = null;
         return (
           <div
@@ -56,7 +62,7 @@ export default function DataPanel({ fields }: { fields: FieldMap }) {
           >
             <button
               onClick={() =>
-                setCollapsed((prev) => ({ ...prev, [cat.id]: !prev[cat.id] }))
+                setExpanded((prev) => ({ ...prev, [cat.id]: !prev[cat.id] }))
               }
               className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left hover:bg-soft"
             >
@@ -71,8 +77,12 @@ export default function DataPanel({ fields }: { fields: FieldMap }) {
 
             {open && (
               <div className="flex flex-col gap-2 border-t border-line px-4 py-3">
-                {categoryFields(cat.id).map((f) => {
-                  const state = fields[f.key];
+                {categoryFields(schema, cat.id).map((f) => {
+                  const state = fields[f.key] || {
+                    value: "",
+                    status: "empty" as const,
+                    inferred: false,
+                  };
                   const showGroup = f.group && f.group !== currentGroup;
                   if (f.group) currentGroup = f.group;
                   return (
