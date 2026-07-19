@@ -3,6 +3,7 @@ import { materialsLinksList } from "./letter";
 import type {
   FieldMap,
   LetterResult,
+  ProjectFusion,
   ProjectLetter,
   SavedAudience,
   TierPlan,
@@ -108,8 +109,13 @@ export function buildProjectSummary(
   fields: FieldMap,
   audience: SavedAudience | null,
   schema?: FieldSchema,
-  letter?: ProjectLetter | null
+  letter?: ProjectLetter | null,
+  fusion?: ProjectFusion | null
 ) {
+  const fusionLine = fusion?.summary
+    ? `${fusion.summary.total} unique leads · ${fusion.summary.silver} Silver · ${fusion.summary.gold} Gold · ${fusion.summary.diamond} Diamond (top ${fusion.summary.exportN})`
+    : "No fusion run yet.";
+
   const parts = [
     `PROJECT: ${name}`,
     `Generated: ${new Date().toLocaleString()}`,
@@ -131,6 +137,12 @@ export function buildProjectSummary(
     "════════════════════════════════",
     "",
     letter?.result ? buildLetterSummary(letter) : "No letter sequences generated.",
+    "",
+    "════════════════════════════════",
+    "AUDIENCE FUSION",
+    "════════════════════════════════",
+    "",
+    fusionLine,
   ];
   return parts.join("\n");
 }

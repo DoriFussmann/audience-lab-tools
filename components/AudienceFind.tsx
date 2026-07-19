@@ -8,9 +8,7 @@ import type { FieldSchema } from "@/lib/fields";
 import {
   AUDIENCE_ROLES,
   buildTierPlan,
-  nextBestForRole,
   retrieveByRole,
-  type RoleCandidates,
 } from "@/lib/match";
 import { buildAudienceSummary } from "@/lib/summary";
 import type {
@@ -32,12 +30,14 @@ function BasketBar({
   animate,
   expanded,
   onToggle,
+  onReject,
 }: {
   item: BasketItem;
   index: number;
   animate: boolean;
   expanded: boolean;
   onToggle: () => void;
+  onReject?: () => void;
 }) {
   const row = item.row;
   return (
@@ -45,16 +45,27 @@ function BasketBar({
       className={`border border-line ${animate ? "basket-bar-enter" : ""}`}
       style={animate ? { animationDelay: `${index * 80}ms` } : undefined}
     >
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left"
-      >
-        <span className="min-w-0 truncate text-ink">{row.premade}</span>
-        <span className="shrink-0 text-muted">
-          {item.role} · {item.confidence}
-        </span>
-      </button>
+      <div className="flex items-center gap-2 px-3 py-2.5">
+        <button
+          type="button"
+          onClick={onToggle}
+          className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
+        >
+          <span className="min-w-0 truncate text-ink">{row.premade}</span>
+          <span className="shrink-0 text-muted">
+            {item.role} · {item.confidence}
+          </span>
+        </button>
+        {onReject && (
+          <button
+            type="button"
+            onClick={onReject}
+            className="shrink-0 rounded border border-line px-2 py-1 text-muted hover:text-ink"
+          >
+            Reject
+          </button>
+        )}
+      </div>
       <div className={`expand-panel ${expanded ? "open" : ""}`}>
         <div className="expand-panel-inner">
           <div className="flex flex-col gap-1.5 border-t border-line px-3 py-3 text-muted">
@@ -73,9 +84,11 @@ function BasketBar({
 function BasketSection({
   basket,
   onClear,
+  onReject,
 }: {
   basket: BasketItem[];
   onClear?: () => void;
+  onReject?: (id: string) => void;
 }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [animate, setAnimate] = useState(true);
@@ -111,6 +124,7 @@ function BasketSection({
             onToggle={() =>
               setExpandedId((prev) => (prev === item.row.id ? null : item.row.id))
             }
+            onReject={onReject ? () => onReject(item.row.id) : undefined}
           />
         ))}
       </div>
@@ -212,13 +226,19 @@ function TierSection({ plan }: { plan: TierPlan }) {
 function ConfirmedResults({
   audience,
   onClear,
+  onReject,
 }: {
   audience: SavedAudience;
   onClear: () => void;
+  onReject: (id: string) => void;
 }) {
   return (
     <div className="flex flex-col gap-8">
-      <BasketSection basket={audience.basket} onClear={onClear} />
+      <BasketSection
+        basket={audience.basket}
+        onClear={onClear}
+        onReject={onReject}
+      />
       <TierSection plan={audience.tierPlan} />
       <CopyBox value={buildAudienceSummary(audience)} />
     </div>
@@ -246,6 +266,7 @@ function BasketRow({
       {onReject && (
         <div className="pt-1">
           <button
+            type="button"
             onClick={onReject}
             className="rounded border border-line px-2 py-1 text-muted hover:text-ink"
           >
@@ -286,8 +307,6 @@ export default function AudienceFind({
   const [typeFilter, setTypeFilter] = useState("All");
   /** Proposed basket before confirm (resolved rows). */
   const [proposed, setProposed] = useState<BasketItem[]>([]);
-  /** Stage-1 pool kept for reject → next-best. */
-  const [stage1, setStage1] = useState<RoleCandidates | null>(null);
 
   const rowById = useMemo(() => {
     const m = new Map<string, TaxRow>();
@@ -319,9 +338,8 @@ export default function AudienceFind({
     setBusy(true);
     setError("");
     try {
-      const { byRole, payload, total } = buildCandidatesByRole();
+      const { payload, total } = buildCandidatesByRole();
       if (!total) throw new Error("No candidates matched. Confirm Journey fields (pain, category, competitor, adjacent, stage).");
-      setStage1(byRole);
 
       const res = await fetch("/api/find", {
         method: "POST",
@@ -397,37 +415,40 @@ export default function AudienceFind({
     ]);
   }
 
-  function stage1Pool(): RoleCandidates {
-    return stage1 || retrieveByRole(rows, fields, typeFilter);
-  }
-
+  /** Remove from proposed basket (no auto-replace — user is shrinking the list). */
   function rejectFromProposed(id: string) {
-    const pool = stage1Pool();
-    if (!stage1) setStage1(pool);
     const current = proposed.find((b) => b.row.id === id);
     if (!current) return;
-    const exclude = new Set(proposed.map((b) => b.row.id));
-    const replacement = nextBestForRole(pool, current.role, exclude);
-    setProposed((prev) => {
-      const without = prev.filter((b) => b.row.id !== id);
-      if (!replacement) return without;
-      return [
-        ...without,
-        {
-          row: replacement.row,
-          why: `Next-best ${current.role} candidate from Stage-1 retrieval.`,
-          confidence: "medium" as const,
-          role: current.role,
-        },
-      ];
-    });
+    setProposed((prev) => prev.filter((b) => b.row.id !== id));
     setMessages((prev) => [
       ...prev,
       {
         role: "assistant",
-        content: replacement
-          ? `Rejected ${current.row.premade}. Offering next-best for ${current.role}: ${replacement.row.premade} (${replacement.row.id}).`
-          : `Rejected ${current.row.premade}. No further Stage-1 candidates for ${current.role}.`,
+        content: `Rejected ${current.row.premade}. Removed from the proposed basket.`,
+      },
+    ]);
+  }
+
+  function rejectFromConfirmed(id: string) {
+    if (!audience) return;
+    const current = audience.basket.find((b) => b.row.id === id);
+    if (!current) return;
+    const nextBasket = audience.basket.filter((b) => b.row.id !== id);
+    if (!nextBasket.length) {
+      setAudience(null);
+      setProposed([]);
+    } else {
+      setAudience({
+        basket: nextBasket,
+        tierPlan: buildTierPlan(nextBasket),
+      });
+      setProposed(nextBasket);
+    }
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "assistant",
+        content: `Rejected ${current.row.premade}. Removed from the confirmed basket.`,
       },
     ]);
   }
@@ -459,6 +480,7 @@ export default function AudienceFind({
             setAudience(null);
             setProposed([]);
           }}
+          onReject={rejectFromConfirmed}
         />
       )}
 

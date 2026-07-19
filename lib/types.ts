@@ -112,6 +112,29 @@ export type ProjectLetter = {
   result: LetterResult | null;
 };
 
+/** Persisted attachment metadata only — never lead rows. */
+export type FusionAttachmentMeta = {
+  taxonomyId: string;
+  fileNames: string[];
+  rowCount: number;
+  needsReattach: boolean;
+};
+
+export type FusionSummary = {
+  total: number;
+  silver: number;
+  gold: number;
+  diamond: number;
+  exportN: number;
+  fusedAt: number;
+};
+
+export type ProjectFusion = {
+  attachments: FusionAttachmentMeta[];
+  summary: FusionSummary | null;
+  exportN: number;
+};
+
 export type Project = {
   id: string;
   name: string;
@@ -127,4 +150,5 @@ export type Project = {
     taxonomyName: string;
   };
   letter: ProjectLetter;
+  fusion: ProjectFusion;
 };

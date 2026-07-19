@@ -5,6 +5,7 @@ import { get, set } from "idb-keyval";
 import Admin from "@/components/Admin";
 import AudienceDefine from "@/components/AudienceDefine";
 import AudienceFind from "@/components/AudienceFind";
+import AudienceFusion from "@/components/AudienceFusion";
 import AudienceLetter from "@/components/AudienceLetter";
 import Dashboard from "@/components/Dashboard";
 import LoginGate from "@/components/LoginGate";
@@ -17,6 +18,11 @@ import {
   schemaNeedsMigration,
   type FieldSchema,
 } from "@/lib/fields";
+import {
+  emptyProjectFusion,
+  markFusionNeedsReattach,
+  normalizeProjectFusion,
+} from "@/lib/fusion";
 import { emptyProjectLetter, normalizeProjectLetter } from "@/lib/letter";
 import { normalizeSavedAudience } from "@/lib/match";
 import {
@@ -32,6 +38,7 @@ import type {
   ChatMessage,
   FieldMap,
   Project,
+  ProjectFusion,
   ProjectLetter,
   SavedAudience,
   TaxRow,
@@ -42,13 +49,14 @@ const TAX_NAME = "audience-app.taxonomy.name";
 const FIELD_SCHEMA = "audience-app.field-schema";
 const CHAT_PROMPTS = "audience-app.chat-prompts";
 
-type Tab = "dashboard" | "define" | "find" | "letter" | "admin";
+type Tab = "dashboard" | "define" | "find" | "letter" | "fusion" | "admin";
 
 const NAV: [Tab, string][] = [
   ["dashboard", "Project Dashboard"],
   ["define", "Audience Define"],
   ["find", "Audience Find"],
   ["letter", "Audience Letter"],
+  ["fusion", "Audience Fusion"],
 ];
 
 function navButtonClass(active: boolean) {
@@ -72,6 +80,7 @@ export default function Page() {
   const [findMessages, setFindMessagesState] = useState<ChatMessage[]>([]);
   const [audience, setAudience] = useState<SavedAudience | null>(null);
   const [letter, setLetterState] = useState<ProjectLetter>(() => emptyProjectLetter());
+  const [fusion, setFusionState] = useState<ProjectFusion>(() => emptyProjectFusion());
 
   const [rows, setRows] = useState<TaxRow[]>([]);
   const [taxonomyName, setTaxonomyName] = useState("");
@@ -128,6 +137,7 @@ export default function Page() {
             audience: normalizeSavedAudience(p.find?.audience),
           },
           letter: normalizeProjectLetter(p.letter),
+          fusion: markFusionNeedsReattach(normalizeProjectFusion(p.fusion)),
         }));
         saveProjects(updated);
         setProjects(updated);
@@ -140,6 +150,7 @@ export default function Page() {
               ...p.find,
               audience: normalizeSavedAudience(p.find?.audience),
             },
+            fusion: markFusionNeedsReattach(normalizeProjectFusion(p.fusion)),
           }))
         );
       } finally {
@@ -167,6 +178,7 @@ export default function Page() {
                 define: { fields, messages: defineMessages },
                 find: { messages: findMessages, audience, taxonomyName },
                 letter,
+                fusion,
               }
             : p
         );
@@ -176,7 +188,7 @@ export default function Page() {
       setSaved(true);
     }, 400);
     return () => clearTimeout(t);
-  }, [currentId, fields, defineMessages, findMessages, audience, taxonomyName, letter]);
+  }, [currentId, fields, defineMessages, findMessages, audience, taxonomyName, letter, fusion]);
 
   function flash(msg: string) {
     setToast(msg);
@@ -238,6 +250,7 @@ export default function Page() {
       define: { fields: emptyFields(schema), messages: [] },
       find: { messages: [], audience: null, taxonomyName },
       letter: emptyProjectLetter(),
+      fusion: emptyProjectFusion(),
     };
     const next = [...projects, project];
     setProjects(next);
@@ -248,6 +261,7 @@ export default function Page() {
     setFindMessagesState([]);
     setAudience(null);
     setLetterState(emptyProjectLetter());
+    setFusionState(emptyProjectFusion());
     setCurrentId(project.id);
     setMenuOpen(false);
     setTab("define");
@@ -260,6 +274,7 @@ export default function Page() {
     setFindMessagesState(p.find.messages);
     setAudience(normalizeSavedAudience(p.find.audience));
     setLetterState(normalizeProjectLetter(p.letter));
+    setFusionState(markFusionNeedsReattach(normalizeProjectFusion(p.fusion)));
     setCurrentId(p.id);
     setMenuOpen(false);
     setTab("dashboard");
@@ -378,6 +393,7 @@ export default function Page() {
               fields={fields}
               audience={audience}
               letter={letter}
+              fusion={fusion}
               schema={schema}
               onOpen={setTab}
             />
@@ -415,6 +431,15 @@ export default function Page() {
               prompt={prompts.letter}
               letter={letter}
               setLetter={setLetterState}
+              onOpenTab={setTab}
+            />
+          )}
+          {tab === "fusion" && (
+            <AudienceFusion
+              projectName={current.name}
+              audience={audience}
+              fusion={fusion}
+              setFusion={setFusionState}
               onOpenTab={setTab}
             />
           )}

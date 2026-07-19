@@ -5,7 +5,7 @@ import CopyBox from "./CopyBox";
 import { allDone, categoryDone, categoryFields, type FieldSchema } from "@/lib/fields";
 import { materialsLinksList } from "@/lib/letter";
 import { buildProjectSummary } from "@/lib/summary";
-import type { FieldMap, ProjectLetter, SavedAudience } from "@/lib/types";
+import type { FieldMap, ProjectFusion, ProjectLetter, SavedAudience } from "@/lib/types";
 
 function Chevron({ open }: { open: boolean }) {
   return (
@@ -148,6 +148,7 @@ export default function Dashboard({
   fields,
   audience,
   letter,
+  fusion,
   schema,
   onOpen,
 }: {
@@ -155,8 +156,9 @@ export default function Dashboard({
   fields: FieldMap;
   audience: SavedAudience | null;
   letter: ProjectLetter;
+  fusion: ProjectFusion;
   schema: FieldSchema;
-  onOpen: (tab: "define" | "find" | "letter") => void;
+  onOpen: (tab: "define" | "find" | "letter" | "fusion") => void;
 }) {
   const [projectSummary, setProjectSummary] = useState("");
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
@@ -172,6 +174,9 @@ export default function Dashboard({
   const emailCount =
     letter.result?.tiers.reduce((n, t) => n + t.emails.length, 0) ?? 0;
   const materialLinks = materialsLinksList(letter.materials.links);
+  const fusionSummary = fusion.summary;
+  const fusionNeedsReattach = fusion.attachments.some((a) => a.needsReattach);
+  const fusionDone = !!fusionSummary;
 
   const categoriesDone = schema.categories.filter((cat) =>
     categoryDone(fields, schema, cat.id)
@@ -184,6 +189,13 @@ export default function Dashboard({
     : "In progress";
   const findStatus = findDone ? "Completed" : "Not started";
   const letterStatus = letterDone ? "Generated" : "Not started";
+  const fusionStatus = !findDone
+    ? "Waiting on Find"
+    : fusionNeedsReattach
+    ? "Re-attach needed"
+    : fusionDone
+    ? "Fused"
+    : "Not started";
 
   const defineMeta =
     confirmed + skipped === 0
@@ -199,6 +211,12 @@ export default function Dashboard({
         materialLinks.length ? ` · ${materialLinks.length} links` : ""
       }`
     : "No sequences generated";
+
+  const fusionMeta = fusionSummary
+    ? `${fusionSummary.total} unique · ${fusionSummary.silver} Silver · ${fusionSummary.gold} Gold · ${fusionSummary.diamond} Diamond`
+    : findDone
+    ? "Attach lead CSVs and fuse"
+    : "Requires a confirmed Find basket";
 
   function toggle(id: string) {
     setOpenSections((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -327,6 +345,31 @@ export default function Dashboard({
         </CollapsibleCard>
 
         <CollapsibleCard
+          title="Audience Fusion"
+          meta={fusionMeta}
+          status={fusionStatus}
+          statusAccent={fusionDone && !fusionNeedsReattach}
+          open={!!openSections.fusion}
+          onToggle={() => toggle("fusion")}
+        >
+          {fusionSummary && (
+            <div className="text-muted">
+              {fusionSummary.total} unique leads · {fusionSummary.silver} Silver ·{" "}
+              {fusionSummary.gold} Gold · {fusionSummary.diamond} Diamond
+              {fusionNeedsReattach ? " · re-attach CSVs to fuse again" : ""}
+            </div>
+          )}
+          <div>
+            <button
+              onClick={() => onOpen("fusion")}
+              className="rounded-lg border border-line px-3 py-1.5 text-muted hover:text-ink"
+            >
+              Open
+            </button>
+          </div>
+        </CollapsibleCard>
+
+        <CollapsibleCard
           title="Project Summary"
           meta={
             projectSummary
@@ -342,7 +385,14 @@ export default function Dashboard({
             <button
               onClick={() =>
                 setProjectSummary(
-                  buildProjectSummary(projectName, fields, audience, schema, letter)
+                  buildProjectSummary(
+                    projectName,
+                    fields,
+                    audience,
+                    schema,
+                    letter,
+                    fusion
+                  )
                 )
               }
               className="shrink-0 rounded-lg border border-line px-3 py-1.5 text-muted hover:text-ink"
