@@ -115,16 +115,47 @@ create trigger projects_prevent_owner_change
   before update on public.projects
   for each row execute function public.prevent_owner_id_change();
 
+-- ---------------------------------------------------------------------------
+-- SECURITY DEFINER helpers to break projects <-> project_shares RLS recursion.
+-- Without these, the projects policies query project_shares and the
+-- project_shares policies query projects, which Postgres rejects with
+-- 42P17 (infinite recursion detected in policy). Running the membership/
+-- ownership checks in SECURITY DEFINER functions bypasses RLS on the inner
+-- table and stops the cycle.
+-- ---------------------------------------------------------------------------
+create or replace function public.is_project_owner(p_project_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.projects p
+    where p.id = p_project_id and p.owner_id = auth.uid()
+  );
+$$;
+
+create or replace function public.is_shared_with(p_project_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.project_shares s
+    where s.project_id = p_project_id and s.user_id = auth.uid()
+  );
+$$;
+
 drop policy if exists "projects_select_owner_or_shared" on public.projects;
 create policy "projects_select_owner_or_shared"
   on public.projects for select
   to authenticated
   using (
     owner_id = auth.uid()
-    or exists (
-      select 1 from public.project_shares s
-      where s.project_id = projects.id and s.user_id = auth.uid()
-    )
+    or public.is_shared_with(id)
   );
 
 drop policy if exists "projects_insert_own" on public.projects;
@@ -143,25 +174,16 @@ create policy "projects_update_owner_or_shared"
   to authenticated
   using (
     owner_id = auth.uid()
-    or exists (
-      select 1 from public.project_shares s
-      where s.project_id = projects.id and s.user_id = auth.uid()
-    )
+    or public.is_shared_with(id)
   )
   with check (
     (
       owner_id = auth.uid()
-      and not exists (
-        select 1 from public.project_shares s
-        where s.project_id = projects.id and s.user_id = auth.uid()
-      )
+      and not public.is_shared_with(id)
     )
     or (
       owner_id is distinct from auth.uid()
-      and exists (
-        select 1 from public.project_shares s
-        where s.project_id = projects.id and s.user_id = auth.uid()
-      )
+      and public.is_shared_with(id)
     )
   );
 
@@ -177,50 +199,27 @@ create policy "project_shares_select_related"
   to authenticated
   using (
     user_id = auth.uid()
-    or exists (
-      select 1 from public.projects p
-      where p.id = project_shares.project_id and p.owner_id = auth.uid()
-    )
+    or public.is_project_owner(project_id)
   );
 
 drop policy if exists "project_shares_insert_owner" on public.project_shares;
 create policy "project_shares_insert_owner"
   on public.project_shares for insert
   to authenticated
-  with check (
-    exists (
-      select 1 from public.projects p
-      where p.id = project_shares.project_id and p.owner_id = auth.uid()
-    )
-  );
+  with check (public.is_project_owner(project_id));
 
 drop policy if exists "project_shares_update_owner" on public.project_shares;
 create policy "project_shares_update_owner"
   on public.project_shares for update
   to authenticated
-  using (
-    exists (
-      select 1 from public.projects p
-      where p.id = project_shares.project_id and p.owner_id = auth.uid()
-    )
-  )
-  with check (
-    exists (
-      select 1 from public.projects p
-      where p.id = project_shares.project_id and p.owner_id = auth.uid()
-    )
-  );
+  using (public.is_project_owner(project_id))
+  with check (public.is_project_owner(project_id));
 
 drop policy if exists "project_shares_delete_owner" on public.project_shares;
 create policy "project_shares_delete_owner"
   on public.project_shares for delete
   to authenticated
-  using (
-    exists (
-      select 1 from public.projects p
-      where p.id = project_shares.project_id and p.owner_id = auth.uid()
-    )
-  );
+  using (public.is_project_owner(project_id));
 
 -- ---------------------------------------------------------------------------
 -- app_config
