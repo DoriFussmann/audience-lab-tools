@@ -5,11 +5,15 @@ export const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 let client: Anthropic | null = null;
 
 export function getClient() {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    throw new Error("ANTHROPIC_API_KEY is not set in .env.local");
+  const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
+  if (!apiKey) {
+    throw new Error(
+      "ANTHROPIC_API_KEY is not set. Add it to the server environment " +
+        "(e.g. your Vercel project env vars, scoped to the deployment you are hitting)."
+    );
   }
   if (!client) {
-    client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    client = new Anthropic({ apiKey });
   }
   return client;
 }
