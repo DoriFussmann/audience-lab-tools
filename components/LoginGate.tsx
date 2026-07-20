@@ -1,14 +1,34 @@
 "use client";
 
 import { useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 
-export default function LoginGate({ onContinue }: { onContinue: () => void }) {
-  const [name, setName] = useState("");
+export default function LoginGate() {
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const valid = name.trim().length > 0 && password.length > 0;
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const valid = email.trim().length > 0 && password.length > 0;
 
-  function submit() {
-    if (valid) onContinue();
+  async function submit() {
+    if (!valid || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const supabase = createClient();
+      const { error: signError } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
+      if (signError) {
+        setError(signError.message || "Sign in failed");
+        return;
+      }
+    } catch {
+      setError("Sign in failed");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -55,9 +75,11 @@ export default function LoginGate({ onContinue }: { onContinue: () => void }) {
           <div className="flex flex-col gap-3">
             <input
               autoFocus
-              value={name}
-              placeholder="Name"
-              onChange={(e) => setName(e.target.value)}
+              type="email"
+              autoComplete="email"
+              value={email}
+              placeholder="Email"
+              onChange={(e) => setEmail(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") submit();
               }}
@@ -65,6 +87,7 @@ export default function LoginGate({ onContinue }: { onContinue: () => void }) {
             />
             <input
               type="password"
+              autoComplete="current-password"
               value={password}
               placeholder="Password"
               onChange={(e) => setPassword(e.target.value)}
@@ -73,13 +96,17 @@ export default function LoginGate({ onContinue }: { onContinue: () => void }) {
               }}
               className="rounded-lg border border-line px-3 py-2"
             />
+            {error && <div className="text-accent">{error}</div>}
             <button
-              disabled={!valid}
+              disabled={!valid || busy}
               onClick={submit}
               className="rounded-lg border border-line px-3 py-2 text-muted hover:text-ink disabled:opacity-40"
             >
-              Continue
+              {busy ? "Signing in…" : "Continue"}
             </button>
+            <p className="pt-1 text-center text-[13px] text-muted">
+              Access is managed by your administrator.
+            </p>
           </div>
         </div>
       </div>

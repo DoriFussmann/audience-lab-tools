@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { Project } from "@/lib/types";
+import type { ProjectListItem } from "@/lib/projects";
 
 function TrashIcon() {
   return (
@@ -27,11 +27,13 @@ export default function ProjectGate({
   onCreate,
   onOpen,
   onDelete,
+  onShare,
 }: {
-  projects: Project[];
+  projects: ProjectListItem[];
   onCreate: (name: string) => void;
-  onOpen: (p: Project) => void;
-  onDelete: (p: Project) => void;
+  onOpen: (p: ProjectListItem) => void;
+  onDelete: (p: ProjectListItem) => void;
+  onShare?: (p: ProjectListItem) => void;
 }) {
   const [name, setName] = useState("");
   const taken = projects.some((p) => p.name.toLowerCase() === name.trim().toLowerCase());
@@ -74,22 +76,42 @@ export default function ProjectGate({
                 >
                   <button
                     onClick={() => onOpen(p)}
-                    className="flex min-w-0 flex-1 items-center justify-between px-3 py-2 text-left"
+                    className="flex min-w-0 flex-1 flex-col items-start px-3 py-2 text-left"
                   >
-                    <span className="truncate">{p.name}</span>
-                    <span className="pl-3 text-muted">
-                      {new Date(p.updatedAt).toLocaleDateString()}
-                    </span>
+                    <div className="flex w-full items-center justify-between gap-2">
+                      <span className="truncate">{p.name}</span>
+                      <span className="shrink-0 pl-3 text-muted">
+                        {new Date(p.updatedAt).toLocaleDateString()}
+                      </span>
+                    </div>
+                    {!p.isOwner && (
+                      <span className="pt-0.5 text-[12px] text-muted">
+                        shared by {p.ownerEmail || "another user"}
+                      </span>
+                    )}
                   </button>
-                  <button
-                    type="button"
-                    aria-label={`Delete ${p.name}`}
-                    title="Delete project"
-                    onClick={() => onDelete(p)}
-                    className="mr-2 shrink-0 rounded p-1.5 text-muted opacity-0 hover:text-accent group-hover:opacity-100"
-                  >
-                    <TrashIcon />
-                  </button>
+                  {p.isOwner && onShare && (
+                    <button
+                      type="button"
+                      aria-label={`Share ${p.name}`}
+                      title="Share project"
+                      onClick={() => onShare(p)}
+                      className="mr-1 shrink-0 rounded px-2 py-1.5 text-[12px] text-muted opacity-0 hover:text-ink group-hover:opacity-100"
+                    >
+                      Share
+                    </button>
+                  )}
+                  {p.isOwner && (
+                    <button
+                      type="button"
+                      aria-label={`Delete ${p.name}`}
+                      title="Delete project"
+                      onClick={() => onDelete(p)}
+                      className="mr-2 shrink-0 rounded p-1.5 text-muted opacity-0 hover:text-accent group-hover:opacity-100"
+                    >
+                      <TrashIcon />
+                    </button>
+                  )}
                 </div>
               ))}
             </div>

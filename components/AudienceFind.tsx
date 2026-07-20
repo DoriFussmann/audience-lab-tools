@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Chat from "./Chat";
 import CopyBox from "./CopyBox";
 import Proposals from "./Proposals";
+import StageReset from "./StageReset";
 import type { FieldSchema } from "@/lib/fields";
 import {
   AUDIENCE_ROLES,
@@ -289,6 +290,8 @@ export default function AudienceFind({
   setAudience,
   schema,
   prompt,
+  resetBlockedMessage,
+  onResetStage,
 }: {
   fields: FieldMap;
   applyProposal: (key: string, value: string, inferred: boolean) => void;
@@ -300,6 +303,8 @@ export default function AudienceFind({
   setAudience: (a: SavedAudience | null) => void;
   schema: FieldSchema;
   prompt: string;
+  resetBlockedMessage?: string | null;
+  onResetStage?: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -509,8 +514,12 @@ export default function AudienceFind({
         <div className="flex-1 text-muted">
           {ready
             ? `${taxonomyName} · ${rows.length.toLocaleString()} audiences`
-            : "No taxonomy loaded — set the file source in Admin"}
+            : "No taxonomy loaded"}
         </div>
+
+        {onResetStage && (
+          <StageReset blockedMessage={resetBlockedMessage ?? null} onReset={onResetStage} />
+        )}
 
         <select
           value={typeFilter}
@@ -536,7 +545,7 @@ export default function AudienceFind({
           messages={messages}
           busy={busy}
           disabled={!ready}
-          placeholder={ready ? "Message" : "Set taxonomy in Admin to start"}
+          placeholder={ready ? "Message" : "Taxonomy not available yet"}
           onSend={send}
           footer={footer}
         />

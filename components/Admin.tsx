@@ -37,6 +37,7 @@ export default function Admin({
   rowsCount,
   loadingTaxonomy,
   onFile,
+  onRemoveTaxonomy,
 }: {
   schema: FieldSchema;
   prompts: ChatPrompts;
@@ -46,6 +47,7 @@ export default function Admin({
   rowsCount: number;
   loadingTaxonomy: boolean;
   onFile: (file: File) => void;
+  onRemoveTaxonomy?: () => void;
 }) {
   const [draftSchema, setDraftSchema] = useState(() => cloneSchema(schema));
   const [draftPrompts, setDraftPrompts] = useState(() => clonePrompts(prompts));
@@ -231,6 +233,15 @@ export default function Admin({
               />
             </label>
           </div>
+          {ready && onRemoveTaxonomy && (
+            <button
+              type="button"
+              onClick={onRemoveTaxonomy}
+              className="self-start rounded-lg border border-line px-3 py-1.5 text-muted hover:text-accent"
+            >
+              Remove taxonomy
+            </button>
+          )}
         </section>
 
         <section className="flex flex-col gap-4">

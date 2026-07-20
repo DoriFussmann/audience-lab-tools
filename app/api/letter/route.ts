@@ -7,6 +7,7 @@ import {
   buildLetterUserPayload,
   renderPrompt,
 } from "@/lib/prompts";
+import { requireUser } from "@/lib/supabase/server";
 import type {
   ApproachStyle,
   FieldMap,
@@ -27,6 +28,11 @@ type Body = {
 };
 
 export async function POST(req: Request) {
+  const user = await requireUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const body = (await req.json()) as Body;
     const schema = normalizeSchema(body.schema) || DEFAULT_SCHEMA;

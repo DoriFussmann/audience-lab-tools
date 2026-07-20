@@ -5,6 +5,7 @@ import Chat from "./Chat";
 import CopyBox from "./CopyBox";
 import DataPanel from "./DataPanel";
 import Proposals from "./Proposals";
+import StageReset from "./StageReset";
 import { prepareDocument, type PreparedDocument } from "@/lib/document";
 import { allDone, buildSummary, fieldByKey, type FieldSchema } from "@/lib/fields";
 import type { ChatMessage, FieldMap, Proposal } from "@/lib/types";
@@ -16,6 +17,8 @@ export default function AudienceDefine({
   setMessages,
   schema,
   prompt,
+  resetBlockedMessage,
+  onResetStage,
 }: {
   fields: FieldMap;
   setFields: (updater: (prev: FieldMap) => FieldMap) => void;
@@ -23,6 +26,8 @@ export default function AudienceDefine({
   setMessages: (updater: (prev: ChatMessage[]) => ChatMessage[]) => void;
   schema: FieldSchema;
   prompt: string;
+  resetBlockedMessage?: string | null;
+  onResetStage?: () => void;
 }) {
   const [pending, setPending] = useState<Proposal[]>([]);
   const [busy, setBusy] = useState(false);
@@ -202,10 +207,17 @@ export default function AudienceDefine({
     <div className="flex h-full min-h-0">
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="border-b border-line px-6 py-3">
-          <div className="text-ink">Audience Define</div>
-          <div className="text-muted">
-            {confirmedCount} of {totalCount} data points confirmed
-            {!done && " · type or upload a document"}
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-ink">Audience Define</div>
+              <div className="text-muted">
+                {confirmedCount} of {totalCount} data points confirmed
+                {!done && " · type or upload a document"}
+              </div>
+            </div>
+            {onResetStage && (
+              <StageReset blockedMessage={resetBlockedMessage ?? null} onReset={onResetStage} />
+            )}
           </div>
         </div>
         <div className="min-h-0 flex-1">

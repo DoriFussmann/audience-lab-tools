@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import StageReset from "./StageReset";
 import { allDone, type FieldSchema } from "@/lib/fields";
 import { APPROACH_STYLES } from "@/lib/letter";
 import {
@@ -163,6 +164,8 @@ export default function AudienceLetter({
   letter,
   setLetter,
   onOpenTab,
+  resetBlockedMessage,
+  onResetStage,
 }: {
   projectName: string;
   fields: FieldMap;
@@ -172,6 +175,8 @@ export default function AudienceLetter({
   letter: ProjectLetter;
   setLetter: (updater: (prev: ProjectLetter) => ProjectLetter) => void;
   onOpenTab: (tab: "define" | "find") => void;
+  resetBlockedMessage?: string | null;
+  onResetStage?: () => void;
 }) {
   const [materialsOpen, setMaterialsOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -303,24 +308,29 @@ export default function AudienceLetter({
       <div className="mx-auto flex max-w-3xl flex-col gap-4">
         <div className="flex items-baseline justify-between gap-3">
           <span className="text-[15px] text-ink">Audience Letter</span>
-          {result && (
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={copyAll}
-                className="rounded-lg border border-line px-3 py-1.5 text-muted hover:text-ink"
-              >
-                {copyAllFlash ? "Copied" : "Copy all"}
-              </button>
-              <button
-                type="button"
-                onClick={download}
-                className="rounded-lg border border-line px-3 py-1.5 text-muted hover:text-ink"
-              >
-                Download
-              </button>
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            {onResetStage && (
+              <StageReset blockedMessage={resetBlockedMessage ?? null} onReset={onResetStage} />
+            )}
+            {result && (
+              <>
+                <button
+                  type="button"
+                  onClick={copyAll}
+                  className="rounded-lg border border-line px-3 py-1.5 text-muted hover:text-ink"
+                >
+                  {copyAllFlash ? "Copied" : "Copy all"}
+                </button>
+                <button
+                  type="button"
+                  onClick={download}
+                  className="rounded-lg border border-line px-3 py-1.5 text-muted hover:text-ink"
+                >
+                  Download
+                </button>
+              </>
+            )}
+          </div>
         </div>
 
         <div className="overflow-hidden rounded-xl border border-line bg-white">

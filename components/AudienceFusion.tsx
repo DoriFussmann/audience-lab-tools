@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import StageReset from "./StageReset";
 import {
   attachedAudiencesHaveDisjointGeography,
   buildAttachmentMeta,
@@ -199,12 +200,19 @@ export default function AudienceFusion({
   fusion,
   setFusion,
   onOpenTab,
+  resetBlockedMessage,
+  onResetStage,
+  resetKey,
 }: {
   projectName: string;
   audience: SavedAudience | null;
   fusion: ProjectFusion;
   setFusion: (updater: (prev: ProjectFusion) => ProjectFusion) => void;
   onOpenTab: (tab: "find") => void;
+  resetBlockedMessage?: string | null;
+  onResetStage?: () => void;
+  /** Bump to clear in-memory lead CSVs after a stage reset. */
+  resetKey?: number;
 }) {
   const [files, setFiles] = useState<AttachedFile[]>([]);
   const [dragging, setDragging] = useState(false);
@@ -223,6 +231,15 @@ export default function AudienceFusion({
   const dragDepth = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const seenHashes = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (resetKey == null) return;
+    setFiles([]);
+    setResult(null);
+    setGeoFilter(null);
+    setGeoMismatch(false);
+    seenHashes.current = new Set();
+  }, [resetKey]);
 
   const basket = audience?.basket || [];
   const ready = basket.length > 0;
@@ -445,6 +462,9 @@ export default function AudienceFusion({
       <div className="mx-auto flex max-w-3xl flex-col gap-6">
         <div className="flex items-baseline justify-between gap-3">
           <span className="text-[15px] text-ink">Audience Fusion</span>
+          {onResetStage && (
+            <StageReset blockedMessage={resetBlockedMessage ?? null} onReset={onResetStage} />
+          )}
         </div>
 
         <div className="flex flex-col gap-2">

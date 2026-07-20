@@ -8,6 +8,7 @@ import {
   type FieldSchema,
 } from "@/lib/fields";
 import { DEFAULT_DEFINE_PROMPT, renderPrompt } from "@/lib/prompts";
+import { requireUser } from "@/lib/supabase/server";
 import type { ChatMessage, FieldMap, Proposal } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -131,6 +132,11 @@ function toHistory(
 }
 
 export async function POST(req: Request) {
+  const user = await requireUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const body = (await req.json()) as Body;
     const { fields } = body;

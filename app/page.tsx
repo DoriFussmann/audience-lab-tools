@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { get, set } from "idb-keyval";
+import type { User } from "@supabase/supabase-js";
 import Admin from "@/components/Admin";
 import AudienceDefine from "@/components/AudienceDefine";
 import AudienceFind from "@/components/AudienceFind";
@@ -10,12 +10,20 @@ import AudienceLetter from "@/components/AudienceLetter";
 import Dashboard from "@/components/Dashboard";
 import LoginGate from "@/components/LoginGate";
 import ProjectGate from "@/components/ProjectGate";
+import SharePanel from "@/components/SharePanel";
+import {
+  ensureTaxonomyCached,
+  fetchProfile,
+  removeTaxonomy,
+  saveAppConfig,
+  seedAppConfigIfEmpty,
+  uploadTaxonomy,
+  type ProfileInfo,
+} from "@/lib/config";
 import {
   DEFAULT_SCHEMA,
   emptyFields,
-  normalizeSchema,
   reconcileFields,
-  schemaNeedsMigration,
   type FieldSchema,
 } from "@/lib/fields";
 import {
@@ -26,13 +34,30 @@ import {
 import { emptyProjectLetter, normalizeProjectLetter } from "@/lib/letter";
 import { normalizeSavedAudience } from "@/lib/match";
 import {
+  deleteProject as deleteProjectRow,
+  fetchProjects,
+  upsertProject,
+  type ProjectListItem,
+} from "@/lib/projects";
+import {
   DEFAULT_PROMPTS,
-  migratePrompts,
-  normalizePrompts,
   syncPromptsToSchema,
   type ChatPrompts,
 } from "@/lib/prompts";
-import { loadProjects, newId, saveProjects } from "@/lib/store";
+import {
+  emptyDefine,
+  emptyFind,
+  resetBlockedBy,
+  type StageId,
+} from "@/lib/stageData";
+import {
+  clearLegacyProjects,
+  hasMigratedLegacyProjects,
+  loadProjects,
+  markLegacyProjectsMigrated,
+  newId,
+} from "@/lib/store";
+import { createClient } from "@/lib/supabase/client";
 import { parseTaxonomy } from "@/lib/taxonomy";
 import type {
   ChatMessage,
@@ -43,11 +68,6 @@ import type {
   SavedAudience,
   TaxRow,
 } from "@/lib/types";
-
-const TAX_ROWS = "audience-app.taxonomy.rows";
-const TAX_NAME = "audience-app.taxonomy.name";
-const FIELD_SCHEMA = "audience-app.field-schema";
-const CHAT_PROMPTS = "audience-app.chat-prompts";
 
 type Tab = "dashboard" | "define" | "find" | "letter" | "fusion" | "admin";
 
@@ -68,9 +88,20 @@ function navButtonClass(active: boolean) {
   );
 }
 
+function toListItem(project: Project, ownerId: string, ownerEmail: string): ProjectListItem {
+  return {
+    ...project,
+    ownerId,
+    ownerEmail,
+    isOwner: true,
+  };
+}
+
 export default function Page() {
   const [hydrated, setHydrated] = useState(false);
-  const [signedIn, setSignedIn] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<ProfileInfo | null>(null);
+  const [accountReady, setAccountReady] = useState(false);
   const [tab, setTab] = useState<Tab>("dashboard");
 
   const [schema, setSchema] = useState<FieldSchema>(DEFAULT_SCHEMA);
@@ -86,114 +117,216 @@ export default function Page() {
   const [taxonomyName, setTaxonomyName] = useState("");
   const [loadingTaxonomy, setLoadingTaxonomy] = useState(false);
 
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [currentId, setCurrentId] = useState<string>("");
   const [saved, setSaved] = useState(true);
   const [toast, setToast] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [shareProject, setShareProject] = useState<ProjectListItem | null>(null);
+  const [fusionResetKey, setFusionResetKey] = useState(0);
 
   const current = projects.find((p) => p.id === currentId) || null;
   const skipSave = useRef(false);
+  const isSuperAdmin = !!profile?.is_super_admin;
 
+  const stageState = {
+    fields,
+    defineMessages,
+    findMessages,
+    audience,
+    letter,
+    fusion,
+  };
+
+  function flash(msg: string) {
+    setToast(msg);
+    setTimeout(() => setToast(""), 2000);
+  }
+
+  // Auth session
   useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+      setHydrated(true);
+    });
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Load profile, config, projects after login
+  useEffect(() => {
+    if (!user) {
+      setProfile(null);
+      setProjects([]);
+      setCurrentId("");
+      setAccountReady(false);
+      return;
+    }
+
+    let cancelled = false;
+    setAccountReady(false);
     (async () => {
       try {
-        const cached = await get<TaxRow[]>(TAX_ROWS);
-        const name = await get<string>(TAX_NAME);
-        if (cached && cached.length) {
-          setRows(cached);
-          setTaxonomyName(name || "taxonomy");
-        }
+        const supabase = createClient();
+        const prof = await fetchProfile(supabase, user.id);
+        if (cancelled) return;
+        setProfile(prof);
 
-        let nextSchema = normalizeSchema(await get(FIELD_SCHEMA)) || DEFAULT_SCHEMA;
-        let schemaMigrated = false;
-        if (schemaNeedsMigration(nextSchema)) {
-          nextSchema = DEFAULT_SCHEMA;
-          schemaMigrated = true;
-        }
-
-        const rawPrompts = normalizePrompts(await get(CHAT_PROMPTS)) || DEFAULT_PROMPTS;
-        const migratedPrompts = migratePrompts(rawPrompts);
-        const nextPrompts = syncPromptsToSchema(migratedPrompts, nextSchema);
-        const promptsMigrated =
-          nextPrompts.define !== rawPrompts.define ||
-          nextPrompts.find !== rawPrompts.find ||
-          nextPrompts.letter !== (rawPrompts.letter || "");
-
-        if (schemaMigrated) await set(FIELD_SCHEMA, nextSchema);
-        if (schemaMigrated || promptsMigrated) await set(CHAT_PROMPTS, nextPrompts);
-
+        const { schema: nextSchema, prompts: nextPrompts } = await seedAppConfigIfEmpty(
+          supabase,
+          !!prof?.is_super_admin
+        );
+        if (cancelled) return;
         setSchema(nextSchema);
         setPrompts(nextPrompts);
 
-        const updated = loadProjects().map((p) => ({
+        let list = await fetchProjects(supabase, user.id);
+        list = list.map((p) => ({
           ...p,
           define: {
             ...p.define,
-            fields: reconcileFields(p.define.fields, nextSchema),
+            fields: reconcileFields(p.define?.fields || emptyFields(nextSchema), nextSchema),
           },
           find: {
-            ...p.find,
+            messages: p.find?.messages || [],
             audience: normalizeSavedAudience(p.find?.audience),
+            taxonomyName: p.find?.taxonomyName || "",
           },
           letter: normalizeProjectLetter(p.letter),
           fusion: markFusionNeedsReattach(normalizeProjectFusion(p.fusion)),
         }));
-        saveProjects(updated);
-        setProjects(updated);
-      } catch {
-        setProjects(
-          loadProjects().map((p) => ({
-            ...p,
-            letter: normalizeProjectLetter(p.letter),
-            find: {
-              ...p.find,
-              audience: normalizeSavedAudience(p.find?.audience),
-            },
-            fusion: markFusionNeedsReattach(normalizeProjectFusion(p.fusion)),
-          }))
-        );
+
+        // One-time legacy localStorage import
+        if (
+          list.length === 0 &&
+          !hasMigratedLegacyProjects()
+        ) {
+          const legacy = loadProjects();
+          if (legacy.length > 0) {
+            const ok = window.confirm(`Import ${legacy.length} local projects?`);
+            markLegacyProjectsMigrated();
+            if (ok) {
+              const imported: ProjectListItem[] = [];
+              for (const p of legacy) {
+                const id = newId();
+                const item = toListItem(
+                  {
+                    ...p,
+                    id,
+                    define: {
+                      ...p.define,
+                      fields: reconcileFields(p.define.fields, nextSchema),
+                    },
+                    find: {
+                      messages: p.find?.messages || [],
+                      audience: normalizeSavedAudience(p.find?.audience),
+                      taxonomyName: p.find?.taxonomyName || "",
+                    },
+                    letter: normalizeProjectLetter(p.letter),
+                    fusion: markFusionNeedsReattach(normalizeProjectFusion(p.fusion)),
+                  },
+                  user.id,
+                  user.email || ""
+                );
+                await upsertProject(supabase, item, user.id);
+                imported.push(item);
+              }
+              clearLegacyProjects();
+              list = imported;
+            }
+          } else {
+            markLegacyProjectsMigrated();
+          }
+        }
+
+        if (cancelled) return;
+        setProjects(list);
+
+        // Warm taxonomy cache (Find will refresh on enter if needed)
+        try {
+          const tax = await ensureTaxonomyCached(supabase);
+          if (!cancelled && tax) {
+            setRows(tax.rows);
+            setTaxonomyName(tax.name);
+          }
+        } catch {
+          // Taxonomy may be empty until admin uploads.
+        }
+      } catch (e) {
+        console.error(e);
+        flash("Could not load account data");
       } finally {
-        setHydrated(true);
+        if (!cancelled) setAccountReady(true);
       }
     })();
-  }, []);
 
-  // Autosave: once a project is open, all collected data saves to it.
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  // Autosave current project → Supabase
   useEffect(() => {
-    if (!currentId) return;
+    if (!user || !currentId || !current) return;
     if (skipSave.current) {
       skipSave.current = false;
       setSaved(true);
       return;
     }
     setSaved(false);
-    const t = setTimeout(() => {
-      setProjects((prev) => {
-        const next = prev.map((p) =>
-          p.id === currentId
-            ? {
-                ...p,
-                updatedAt: Date.now(),
-                define: { fields, messages: defineMessages },
-                find: { messages: findMessages, audience, taxonomyName },
-                letter,
-                fusion,
-              }
-            : p
-        );
-        saveProjects(next);
-        return next;
-      });
-      setSaved(true);
+    const t = setTimeout(async () => {
+      const nextProject: ProjectListItem = {
+        ...current,
+        updatedAt: Date.now(),
+        define: { fields, messages: defineMessages },
+        find: { messages: findMessages, audience, taxonomyName },
+        letter,
+        fusion,
+        name: current.name,
+      };
+      setProjects((prev) => prev.map((p) => (p.id === currentId ? nextProject : p)));
+      try {
+        const supabase = createClient();
+        await upsertProject(supabase, nextProject, current.ownerId);
+        setSaved(true);
+      } catch (e) {
+        console.error(e);
+        flash("Save failed");
+        setSaved(false);
+      }
     }, 400);
     return () => clearTimeout(t);
-  }, [currentId, fields, defineMessages, findMessages, audience, taxonomyName, letter, fusion]);
+  }, [currentId, fields, defineMessages, findMessages, audience, taxonomyName, letter, fusion, user]);
 
-  function flash(msg: string) {
-    setToast(msg);
-    setTimeout(() => setToast(""), 2000);
-  }
+  // Refresh taxonomy when entering Find
+  useEffect(() => {
+    if (!user || tab !== "find") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const supabase = createClient();
+        const tax = await ensureTaxonomyCached(supabase);
+        if (cancelled || !tax) return;
+        setRows(tax.rows);
+        setTaxonomyName(tax.name);
+      } catch {
+        // keep existing cache
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, user]);
+
+  // Non-admins cannot stay on admin tab
+  useEffect(() => {
+    if (tab === "admin" && !isSuperAdmin) setTab("dashboard");
+  }, [tab, isSuperAdmin]);
 
   function applyProposal(key: string, value: string, inferred: boolean) {
     if (!value.trim()) return;
@@ -204,13 +337,14 @@ export default function Page() {
   }
 
   async function onFile(file: File) {
+    if (!isSuperAdmin) return;
     setLoadingTaxonomy(true);
     try {
       const parsed = await parseTaxonomy(file);
+      const supabase = createClient();
+      await uploadTaxonomy(supabase, file, parsed);
       setRows(parsed);
       setTaxonomyName(file.name);
-      await set(TAX_ROWS, parsed);
-      await set(TAX_NAME, file.name);
       flash(`${parsed.length.toLocaleString()} audiences loaded`);
     } catch {
       flash("Could not read that file");
@@ -219,42 +353,74 @@ export default function Page() {
     }
   }
 
+  async function onRemoveTaxonomy() {
+    if (!isSuperAdmin) return;
+    if (!window.confirm("Remove the shared taxonomy file for all users?")) return;
+    setLoadingTaxonomy(true);
+    try {
+      const supabase = createClient();
+      await removeTaxonomy(supabase);
+      setRows([]);
+      setTaxonomyName("");
+      flash("Taxonomy removed");
+    } catch {
+      flash("Could not remove taxonomy");
+    } finally {
+      setLoadingTaxonomy(false);
+    }
+  }
+
   async function saveAdmin(nextSchema: FieldSchema, nextPrompts: ChatPrompts) {
+    if (!isSuperAdmin) return;
     const synced = syncPromptsToSchema(nextPrompts, nextSchema);
     setSchema(nextSchema);
     setPrompts(synced);
-    await set(FIELD_SCHEMA, nextSchema);
-    await set(CHAT_PROMPTS, synced);
+    try {
+      const supabase = createClient();
+      await saveAppConfig(supabase, nextSchema, synced);
+    } catch {
+      flash("Could not save admin settings");
+      return;
+    }
     setFieldsState((prev) => reconcileFields(prev, nextSchema));
-    setProjects((prev) => {
-      const updated = prev.map((p) => ({
+    setProjects((prev) =>
+      prev.map((p) => ({
         ...p,
         define: {
           ...p.define,
           fields: reconcileFields(p.define.fields, nextSchema),
         },
         updatedAt: p.id === currentId ? Date.now() : p.updatedAt,
-      }));
-      saveProjects(updated);
-      return updated;
-    });
+      }))
+    );
     flash("Admin settings saved");
   }
 
-  function createProject(name: string) {
-    const project: Project = {
-      id: newId(),
-      name,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      define: { fields: emptyFields(schema), messages: [] },
-      find: { messages: [], audience: null, taxonomyName },
-      letter: emptyProjectLetter(),
-      fusion: emptyProjectFusion(),
-    };
-    const next = [...projects, project];
-    setProjects(next);
-    saveProjects(next);
+  async function createProject(name: string) {
+    if (!user) return;
+    const id = newId();
+    const project = toListItem(
+      {
+        id,
+        name,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        define: { fields: emptyFields(schema), messages: [] },
+        find: { messages: [], audience: null, taxonomyName },
+        letter: emptyProjectLetter(),
+        fusion: emptyProjectFusion(),
+      },
+      user.id,
+      user.email || profile?.email || ""
+    );
+    try {
+      const supabase = createClient();
+      await upsertProject(supabase, project, user.id);
+    } catch {
+      flash("Could not create project");
+      return;
+    }
+    setProjects((prev) => [project, ...prev]);
     skipSave.current = true;
     setFieldsState(project.define.fields);
     setDefineMessagesState([]);
@@ -267,7 +433,7 @@ export default function Page() {
     setTab("define");
   }
 
-  function openProject(p: Project) {
+  function openProject(p: ProjectListItem) {
     skipSave.current = true;
     setFieldsState(reconcileFields(p.define.fields, schema));
     setDefineMessagesState(p.define.messages);
@@ -280,28 +446,85 @@ export default function Page() {
     setTab("dashboard");
   }
 
-  function deleteProject(p: Project) {
+  async function deleteProject(p: ProjectListItem) {
+    if (!p.isOwner) return;
     if (!window.confirm(`Delete “${p.name}”? This cannot be undone.`)) return;
-    const next = projects.filter((x) => x.id !== p.id);
-    setProjects(next);
-    saveProjects(next);
+    try {
+      const supabase = createClient();
+      await deleteProjectRow(supabase, p.id);
+    } catch {
+      flash("Could not delete project");
+      return;
+    }
+    setProjects((prev) => prev.filter((x) => x.id !== p.id));
+    if (currentId === p.id) setCurrentId("");
+  }
+
+  async function signOut() {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    setUser(null);
+    setProfile(null);
+    setProjects([]);
+    setCurrentId("");
+  }
+
+  function resetStage(stage: StageId) {
+    const blocked = resetBlockedBy(stage, stageState);
+    if (blocked) return;
+    skipSave.current = false;
+    if (stage === "define") {
+      const empty = emptyDefine(schema);
+      setFieldsState(empty.fields);
+      setDefineMessagesState(empty.messages);
+    } else if (stage === "find") {
+      const empty = emptyFind(taxonomyName);
+      setFindMessagesState(empty.messages);
+      setAudience(empty.audience);
+    } else if (stage === "letter") {
+      setLetterState(emptyProjectLetter());
+    } else if (stage === "fusion") {
+      setFusionState(emptyProjectFusion());
+      setFusionResetKey((k) => k + 1);
+    }
   }
 
   if (!hydrated) return null;
 
-  if (!signedIn) {
-    return <LoginGate onContinue={() => setSignedIn(true)} />;
+  if (!user) {
+    return <LoginGate />;
   }
+
+  if (!accountReady) return null;
 
   if (!current) {
     return (
       <div className="mx-auto h-screen max-w-[1280px]">
+        <div className="flex h-12 items-center justify-end gap-4 border-b border-line px-4">
+          <span className="text-muted">{toast}</span>
+          <span className="truncate text-muted">{user.email}</span>
+          <button
+            type="button"
+            onClick={signOut}
+            className="rounded-lg border border-line px-3 py-1.5 text-muted hover:text-ink"
+          >
+            Sign out
+          </button>
+        </div>
         <ProjectGate
           projects={projects}
           onCreate={createProject}
           onOpen={openProject}
           onDelete={deleteProject}
+          onShare={(p) => setShareProject(p)}
         />
+        {shareProject && (
+          <SharePanel
+            projectId={shareProject.id}
+            projectName={shareProject.name}
+            onClose={() => setShareProject(null)}
+          />
+        )}
       </div>
     );
   }
@@ -349,14 +572,21 @@ export default function Page() {
                     key={p.id}
                     onClick={() => openProject(p)}
                     className={
-                      "flex w-full items-center justify-between px-3 py-2 text-left hover:bg-soft " +
+                      "flex w-full flex-col items-start px-3 py-2 text-left hover:bg-soft " +
                       (p.id === currentId ? "bg-soft" : "")
                     }
                   >
-                    <span className="truncate">{p.name}</span>
-                    {p.find.audience?.basket?.length ? (
-                      <span className="pl-2 text-muted">✓</span>
-                    ) : null}
+                    <div className="flex w-full items-center justify-between">
+                      <span className="truncate">{p.name}</span>
+                      {p.find.audience?.basket?.length ? (
+                        <span className="pl-2 text-muted">✓</span>
+                      ) : null}
+                    </div>
+                    {!p.isOwner && (
+                      <span className="text-[12px] text-muted">
+                        shared by {p.ownerEmail || "another user"}
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -366,7 +596,28 @@ export default function Page() {
 
         <div className="flex items-center gap-4">
           <span className="text-muted">{toast}</span>
+          {!current.isOwner && (
+            <span className="text-muted">
+              shared by {current.ownerEmail || "another user"}
+            </span>
+          )}
+          {current.isOwner && (
+            <button
+              type="button"
+              onClick={() => setShareProject(current)}
+              className="rounded-lg border border-line px-3 py-1.5 text-muted hover:text-ink"
+            >
+              Share
+            </button>
+          )}
           <span className="text-muted">{saved ? "Saved" : "Saving…"}</span>
+          <button
+            type="button"
+            onClick={signOut}
+            className="rounded-lg border border-line px-3 py-1.5 text-muted hover:text-ink"
+          >
+            Sign out
+          </button>
         </div>
       </div>
 
@@ -379,11 +630,13 @@ export default function Page() {
               </button>
             ))}
           </div>
-          <div className="mt-auto pt-3">
-            <button onClick={() => setTab("admin")} className={navButtonClass(tab === "admin")}>
-              Admin
-            </button>
-          </div>
+          {isSuperAdmin && (
+            <div className="mt-auto pt-3">
+              <button onClick={() => setTab("admin")} className={navButtonClass(tab === "admin")}>
+                Admin
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="min-h-0 min-w-0 flex-1">
@@ -406,6 +659,8 @@ export default function Page() {
               setMessages={setDefineMessagesState}
               schema={schema}
               prompt={prompts.define}
+              resetBlockedMessage={resetBlockedBy("define", stageState)}
+              onResetStage={() => resetStage("define")}
             />
           )}
           {tab === "find" && (
@@ -420,6 +675,8 @@ export default function Page() {
               setAudience={setAudience}
               schema={schema}
               prompt={prompts.find}
+              resetBlockedMessage={resetBlockedBy("find", stageState)}
+              onResetStage={() => resetStage("find")}
             />
           )}
           {tab === "letter" && (
@@ -432,6 +689,8 @@ export default function Page() {
               letter={letter}
               setLetter={setLetterState}
               onOpenTab={setTab}
+              resetBlockedMessage={resetBlockedBy("letter", stageState)}
+              onResetStage={() => resetStage("letter")}
             />
           )}
           {tab === "fusion" && (
@@ -441,9 +700,12 @@ export default function Page() {
               fusion={fusion}
               setFusion={setFusionState}
               onOpenTab={setTab}
+              resetBlockedMessage={resetBlockedBy("fusion", stageState)}
+              onResetStage={() => resetStage("fusion")}
+              resetKey={fusionResetKey}
             />
           )}
-          {tab === "admin" && (
+          {tab === "admin" && isSuperAdmin && (
             <Admin
               schema={schema}
               prompts={prompts}
@@ -453,10 +715,19 @@ export default function Page() {
               rowsCount={rows.length}
               loadingTaxonomy={loadingTaxonomy}
               onFile={onFile}
+              onRemoveTaxonomy={onRemoveTaxonomy}
             />
           )}
         </div>
       </div>
+
+      {shareProject && (
+        <SharePanel
+          projectId={shareProject.id}
+          projectName={shareProject.name}
+          onClose={() => setShareProject(null)}
+        />
+      )}
     </div>
   );
 }
