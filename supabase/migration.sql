@@ -4,22 +4,6 @@
 create extension if not exists "pgcrypto";
 
 -- ---------------------------------------------------------------------------
--- Helper: is the current user a super admin?
--- ---------------------------------------------------------------------------
-create or replace function public.is_super_admin()
-returns boolean
-language sql
-stable
-security definer
-set search_path = public
-as $$
-  select coalesce(
-    (select is_super_admin from public.profiles where id = auth.uid()),
-    false
-  );
-$$;
-
--- ---------------------------------------------------------------------------
 -- profiles
 -- ---------------------------------------------------------------------------
 create table if not exists public.profiles (
@@ -69,6 +53,23 @@ select
   lower(coalesce(u.email, '')) = 'dori@thenightventures.com'
 from auth.users u
 on conflict (id) do nothing;
+
+-- ---------------------------------------------------------------------------
+-- Helper: is the current user a super admin?
+-- (Defined after profiles so the SQL function body resolves the table.)
+-- ---------------------------------------------------------------------------
+create or replace function public.is_super_admin()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select coalesce(
+    (select is_super_admin from public.profiles where id = auth.uid()),
+    false
+  );
+$$;
 
 -- ---------------------------------------------------------------------------
 -- projects + project_shares (tables first, then policies)
