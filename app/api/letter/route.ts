@@ -12,6 +12,7 @@ import type {
   ApproachStyle,
   FieldMap,
   LetterMaterials,
+  LetterResult,
   SavedAudience,
 } from "@/lib/types";
 
@@ -25,6 +26,10 @@ type Body = {
   style?: ApproachStyle;
   schema?: FieldSchema;
   prompt?: string;
+  /** One-shot revision notes for this generate call only. */
+  feedback?: string;
+  /** Current draft to revise when feedback is provided. */
+  previous?: LetterResult | null;
 };
 
 export async function POST(req: Request) {
@@ -76,6 +81,11 @@ export async function POST(req: Request) {
       audience,
       materials,
       style,
+      feedback:
+        typeof body.feedback === "string" && body.feedback.trim()
+          ? body.feedback.trim()
+          : undefined,
+      previous: body.previous && typeof body.previous === "object" ? body.previous : null,
     });
 
     const data = await askJson<{

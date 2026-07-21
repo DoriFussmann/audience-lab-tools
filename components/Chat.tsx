@@ -30,7 +30,7 @@ export default function Chat({
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, busy, footer]);
+  }, [messages.length, busy]);
 
   function submit() {
     const v = text.trim();

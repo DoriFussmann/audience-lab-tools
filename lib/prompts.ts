@@ -5,6 +5,7 @@ import type {
   AudienceRole,
   FieldMap,
   LetterMaterials,
+  LetterResult,
   SavedAudience,
   TaxRow,
 } from "./types";
@@ -77,7 +78,7 @@ Rules:
 - Never propose a value for a data point that is already CONFIRMED unless the user explicitly changes it.
 - Values are short strings: one line, at most about 25 words. No markdown, no bullet points.
 - Do not congratulate, do not add commentary, do not explain your process. Be direct.
-- If all data points are settled, your reply should just say the definition is complete.
+- If all data points are settled: say the definition is complete and that they can keep chatting to revise any data point. Stay available for edits — when the user asks to change something (or uploads a document with updates), propose revised values for the relevant fields even if they were already CONFIRMED. Do not restart the full intake.
 Respond by calling the "respond" tool. "reply" is your next message to the user. "proposals" holds any data-point values you extracted or inferred this turn.
 Valid field keys: {{valid_keys}}.`;
 
@@ -162,6 +163,15 @@ export function migratePrompts(prompts: ChatPrompts): ChatPrompts {
         "as if telling a friend. Mention they can also upload a document if they already have notes written down — for example:"
       );
     }
+  }
+  if (
+    define.includes("your reply should just say the definition is complete") &&
+    !define.includes("keep chatting to revise")
+  ) {
+    define = define.replace(
+      "- If all data points are settled, your reply should just say the definition is complete.",
+      "- If all data points are settled: say the definition is complete and that they can keep chatting to revise any data point. Stay available for edits — when the user asks to change something (or uploads a document with updates), propose revised values for the relevant fields even if they were already CONFIRMED. Do not restart the full intake."
+    );
   }
   if (find.includes(LEGACY_FIND_WEIGH)) {
     find = find.replace(
@@ -292,20 +302,45 @@ export function formatMaterialsForLetter(materials: LetterMaterials) {
   return `Links:\n${links}\n\nSnippets:\n${snippets}`;
 }
 
+function formatDraftForRevision(result: LetterResult) {
+  const blocks: string[] = [`Style: ${result.style}`, ""];
+  for (const tier of result.tiers) {
+    blocks.push(tier.tier, "");
+    tier.emails.forEach((email, i) => {
+      blocks.push(
+        `Email ${i + 1} · Campaign Day ${email.day}`,
+        `Subject: ${email.subject}`,
+        "",
+        email.body,
+        ""
+      );
+    });
+  }
+  if (result.note) blocks.push(result.note);
+  return blocks.join("\n").trim();
+}
+
 export function buildLetterUserPayload(opts: {
   fields: FieldMap;
   schema: FieldSchema;
   audience: SavedAudience;
   materials: LetterMaterials;
   style: ApproachStyle;
+  feedback?: string;
+  previous?: LetterResult | null;
 }) {
   const confirmed = opts.schema.fields
     .filter((f) => opts.fields[f.key]?.status === "confirmed" && opts.fields[f.key].value.trim())
     .map((f) => `${f.label}: ${opts.fields[f.key].value.trim()}`)
     .join("\n");
 
-  return [
-    "GENERATE cold-email sequences from the following project data.",
+  const feedback = opts.feedback?.trim() || "";
+  const rewriting = !!feedback;
+
+  const parts = [
+    rewriting
+      ? "REWRITE all cold-email sequences from the following project data, applying the revision feedback below. Produce a full new set of Silver, Gold, and Diamond sequences — not partial edits."
+      : "GENERATE cold-email sequences from the following project data.",
     "",
     "APPROACH STYLE:",
     opts.style,
@@ -321,7 +356,16 @@ export function buildLetterUserPayload(opts: {
     "",
     "MATERIALS:",
     formatMaterialsForLetter(opts.materials),
-  ].join("\n");
+  ];
+
+  if (rewriting) {
+    parts.push("", "USER FEEDBACK (apply to the rewrite):", feedback);
+    if (opts.previous) {
+      parts.push("", "CURRENT DRAFT (revise from this):", formatDraftForRevision(opts.previous));
+    }
+  }
+
+  return parts.join("\n");
 }
 
 function fieldStateLine(

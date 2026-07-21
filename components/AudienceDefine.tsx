@@ -10,6 +10,17 @@ import { prepareDocument, type PreparedDocument } from "@/lib/document";
 import { allDone, buildSummary, fieldByKey, type FieldSchema } from "@/lib/fields";
 import type { ChatMessage, FieldMap, Proposal } from "@/lib/types";
 
+function actionableProposals(proposals: Proposal[], snapshot: FieldMap) {
+  return proposals.filter((p) => {
+    const cur = snapshot[p.key];
+    if (!cur) return false;
+    const next = String(p.value || "").trim();
+    if (!next) return false;
+    if (cur.status === "empty") return true;
+    return cur.value.trim() !== next;
+  });
+}
+
 export default function AudienceDefine({
   fields,
   setFields,
@@ -33,6 +44,8 @@ export default function AudienceDefine({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const settlements = useRef<string[]>([]);
+  const fieldsRef = useRef(fields);
+  fieldsRef.current = fields;
   const done = allDone(fields, schema);
   const byKey = fieldByKey(schema);
   const confirmedCount = schema.fields.filter(
@@ -41,6 +54,7 @@ export default function AudienceDefine({
   const totalCount = schema.fields.length;
 
   async function call(history: ChatMessage[], document?: PreparedDocument) {
+    const snapshot = fieldsRef.current;
     setBusy(true);
     setError("");
     try {
@@ -49,7 +63,7 @@ export default function AudienceDefine({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: history,
-          fields,
+          fields: snapshot,
           schema,
           prompt,
           ...(document ? { document } : {}),
@@ -60,10 +74,7 @@ export default function AudienceDefine({
       if (data.reply) {
         setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
       }
-      const fresh = (data.proposals as Proposal[]).filter(
-        (p) => fields[p.key] && fields[p.key].status === "empty"
-      );
-      setPending(fresh);
+      setPending(actionableProposals(data.proposals as Proposal[], snapshot));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Request failed");
     } finally {
@@ -93,10 +104,7 @@ export default function AudienceDefine({
             prev.length ? prev : [{ role: "assistant", content: data.reply }]
           );
         }
-        const fresh = (data.proposals as Proposal[]).filter(
-          (p) => fields[p.key] && fields[p.key].status === "empty"
-        );
-        setPending(fresh);
+        setPending(actionableProposals(data.proposals as Proposal[], fields));
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Request failed");
       } finally {
@@ -120,7 +128,7 @@ export default function AudienceDefine({
   }
 
   async function upload(file: File) {
-    if (busy || done) return;
+    if (busy) return;
     setError("");
     try {
       const document = await prepareDocument(file);
@@ -135,14 +143,16 @@ export default function AudienceDefine({
   }
 
   function settle(key: string, value: string, status: "confirmed" | "skipped", inferred: boolean) {
-    setFields((prev) => ({
-      ...prev,
+    const next: FieldMap = {
+      ...fieldsRef.current,
       [key]: {
         value: status === "confirmed" ? value.trim() : "",
         status,
         inferred: status === "confirmed" ? inferred : false,
       },
-    }));
+    };
+    fieldsRef.current = next;
+    setFields(() => next);
     const def = byKey[key];
     if (!def) return;
     settlements.current.push(
@@ -196,7 +206,7 @@ export default function AudienceDefine({
       />
       {done && (
         <div className="flex flex-col gap-2 rounded-lg border border-line p-3">
-          <div>Audience Define complete. All data points collected.</div>
+          <div>Audience Define complete. Chat below to revise any data point.</div>
           <CopyBox value={buildSummary(fields, schema)} />
         </div>
       )}
@@ -212,7 +222,9 @@ export default function AudienceDefine({
               <div className="text-ink">Audience Define</div>
               <div className="text-muted">
                 {confirmedCount} of {totalCount} data points confirmed
-                {!done && " · type or upload a document"}
+                {done
+                  ? " · complete — chat to revise"
+                  : " · type or upload a document"}
               </div>
             </div>
             {onResetStage && (
@@ -224,10 +236,9 @@ export default function AudienceDefine({
           <Chat
             messages={messages}
             busy={busy}
-            disabled={done}
-            placeholder="Message"
+            placeholder={done ? "Ask to update a data point…" : "Message"}
             onSend={send}
-            onUpload={done ? undefined : upload}
+            onUpload={upload}
             footer={footer}
           />
         </div>

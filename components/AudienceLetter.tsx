@@ -181,8 +181,10 @@ export default function AudienceLetter({
 }) {
   const [materialsOpen, setMaterialsOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [busyMessage, setBusyMessage] = useState("Generating emails…");
   const [error, setError] = useState("");
   const [copyAllFlash, setCopyAllFlash] = useState(false);
+  const [feedback, setFeedback] = useState("");
   const [openTiers, setOpenTiers] = useState<Record<LetterTierName, boolean>>({
     Silver: false,
     Gold: false,
@@ -205,13 +207,15 @@ export default function AudienceLetter({
     setLetter((prev) => ({ ...prev, style }));
   }
 
-  async function generate() {
+  async function generate(opts?: { feedback?: string }) {
     if (!ready || !audience || busy) return;
-    if (result) {
+    const revision = opts?.feedback?.trim() || "";
+    if (result && !revision) {
       const ok = window.confirm("Replace the current letter sequences?");
       if (!ok) return;
     }
 
+    setBusyMessage(revision ? "Rewriting emails…" : "Generating emails…");
     setBusy(true);
     setError("");
     try {
@@ -225,6 +229,9 @@ export default function AudienceLetter({
           style: letter.style,
           schema,
           prompt,
+          ...(revision
+            ? { feedback: revision, previous: result }
+            : {}),
         }),
       });
       const data = await res.json();
@@ -232,11 +239,20 @@ export default function AudienceLetter({
       const next = data.result as LetterResult;
       setLetter((prev) => ({ ...prev, result: next, style: next.style || prev.style }));
       setOpenTiers({ Silver: false, Gold: false, Diamond: false });
+      if (revision) setFeedback("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Request failed");
     } finally {
       setBusy(false);
     }
+  }
+
+  function submitFeedback() {
+    const text = feedback.trim();
+    if (!text || !result || busy) return;
+    const ok = window.confirm("Re-generate all letter sequences with this feedback?");
+    if (!ok) return;
+    void generate({ feedback: text });
   }
 
   async function copyAll() {
@@ -306,7 +322,7 @@ export default function AudienceLetter({
 
   return (
     <div className="scroll-thin h-full overflow-y-auto px-8 py-6">
-      {busy && <LoadingModal message="Generating emails…" />}
+      {busy && <LoadingModal message={busyMessage} />}
       <div className="mx-auto flex max-w-3xl flex-col gap-4">
         <div className="flex items-baseline justify-between gap-3">
           <span className="text-[15px] text-ink">Audience Letter</span>
@@ -392,7 +408,7 @@ export default function AudienceLetter({
           })}
           <button
             type="button"
-            onClick={generate}
+            onClick={() => void generate()}
             disabled={busy}
             className="ml-auto rounded-lg border border-line px-3 py-1.5 text-muted hover:text-ink disabled:opacity-40"
           >
@@ -442,6 +458,31 @@ export default function AudienceLetter({
               </div>
             </div>
             {result.note && <div className="pt-1 text-muted">{result.note}</div>}
+
+            <div className="mt-2 flex flex-col gap-2 rounded-xl border border-line bg-white p-4">
+              <div className="text-ink">Feedback</div>
+              <div className="text-muted">
+                What should change? Submit to rewrite all sequences with your notes.
+              </div>
+              <textarea
+                value={feedback}
+                onChange={(e) => setFeedback(e.target.value)}
+                rows={4}
+                disabled={busy}
+                placeholder="e.g. shorter subjects, warmer tone on Email 1, lead with the proof point sooner…"
+                className="scroll-thin w-full resize-y rounded-lg border border-line bg-white px-3 py-2 text-ink disabled:bg-soft"
+              />
+              <div>
+                <button
+                  type="button"
+                  onClick={submitFeedback}
+                  disabled={busy || !feedback.trim()}
+                  className="rounded-lg border border-line px-3 py-1.5 text-muted hover:text-ink disabled:opacity-40"
+                >
+                  Submit
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>

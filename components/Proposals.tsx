@@ -33,18 +33,24 @@ export default function Proposals({
       {proposals.map((p) => {
         const def = byKey[p.key];
         if (!def) return null;
+        const text = values[p.key] ?? "";
+        const rows = Math.min(
+          10,
+          Math.max(3, text.split("\n").length, Math.ceil(text.length / 72))
+        );
         return (
           <div key={p.key} className="flex flex-col gap-1">
             <div className="flex items-center gap-2 text-muted">
               <span>{def.group ? `${def.group} / ${def.label}` : def.label}</span>
               {p.inferred && <span className="text-[11px] text-accent">inferred</span>}
             </div>
+            <textarea
+              value={text}
+              onChange={(e) => setValues({ ...values, [p.key]: e.target.value })}
+              rows={rows}
+              className="scroll-thin w-full resize-y rounded border border-line px-2 py-1.5 leading-relaxed"
+            />
             <div className="flex items-center gap-2">
-              <input
-                value={values[p.key] ?? ""}
-                onChange={(e) => setValues({ ...values, [p.key]: e.target.value })}
-                className="flex-1 rounded border border-line px-2 py-1"
-              />
               <button
                 onClick={() => onConfirm(p, values[p.key] ?? "")}
                 className="rounded border border-line px-2 py-1 text-muted hover:text-ink"
