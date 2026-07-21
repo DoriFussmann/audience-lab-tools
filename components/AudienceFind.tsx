@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Chat from "./Chat";
 import CopyBox from "./CopyBox";
+import LoadingModal from "./LoadingModal";
 import Proposals from "./Proposals";
 import StageReset from "./StageReset";
 import type { FieldSchema } from "@/lib/fields";
@@ -510,6 +511,7 @@ export default function AudienceFind({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {busy && <LoadingModal message="Finding audiences…" />}
       <div className="flex items-center gap-3 border-b border-line px-6 py-3">
         <div className="flex-1 text-muted">
           {ready

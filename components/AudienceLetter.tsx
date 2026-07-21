@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import LoadingModal from "./LoadingModal";
 import StageReset from "./StageReset";
 import { allDone, type FieldSchema } from "@/lib/fields";
 import { APPROACH_STYLES } from "@/lib/letter";
@@ -305,6 +306,7 @@ export default function AudienceLetter({
 
   return (
     <div className="scroll-thin h-full overflow-y-auto px-8 py-6">
+      {busy && <LoadingModal message="Generating emails…" />}
       <div className="mx-auto flex max-w-3xl flex-col gap-4">
         <div className="flex items-baseline justify-between gap-3">
           <span className="text-[15px] text-ink">Audience Letter</span>

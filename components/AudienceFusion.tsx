@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import LoadingModal from "./LoadingModal";
 import StageReset from "./StageReset";
 import {
   attachedAudiencesHaveDisjointGeography,
@@ -220,6 +221,7 @@ export default function AudienceFusion({
 }) {
   const [files, setFiles] = useState<AttachedFile[]>([]);
   const [dragging, setDragging] = useState(false);
+  const [fusing, setFusing] = useState(false);
   const [result, setResult] = useState<FuseResult | null>(null);
   const [geoFilter, setGeoFilter] = useState<string | null>(null);
   const [geoMismatch, setGeoMismatch] = useState(false);
@@ -393,35 +395,43 @@ export default function AudienceFusion({
     setResult(null);
   }
 
-  function runFuse() {
+  async function runFuse() {
     if (!audience || attachedCount < 2) return;
-    const assigned = files.filter((f) => f.taxonomyId && !f.error && f.rows.length);
-    const byAudience = new Map<string, { taxonomyId: string; rows: typeof assigned[0]["rows"] }>();
-    for (const f of assigned) {
-      const id = f.taxonomyId!;
-      const existing = byAudience.get(id);
-      if (existing) {
-        existing.rows = existing.rows.concat(f.rows);
-      } else {
-        byAudience.set(id, { taxonomyId: id, rows: [...f.rows] });
+    setFusing(true);
+    // Yield one frame so React can paint the loading modal before fuseLeads()
+    // blocks the main thread with synchronous CPU work.
+    await new Promise((resolve) => setTimeout(resolve, 16));
+    try {
+      const assigned = files.filter((f) => f.taxonomyId && !f.error && f.rows.length);
+      const byAudience = new Map<string, { taxonomyId: string; rows: typeof assigned[0]["rows"] }>();
+      for (const f of assigned) {
+        const id = f.taxonomyId!;
+        const existing = byAudience.get(id);
+        if (existing) {
+          existing.rows = existing.rows.concat(f.rows);
+        } else {
+          byAudience.set(id, { taxonomyId: id, rows: [...f.rows] });
+        }
       }
+      const audienceFiles = [...byAudience.values()];
+      const fused = fuseLeads(basket, audienceFiles, audience.tierPlan);
+      setResult(fused);
+      onFused?.(fused);
+      setGeoFilter(null);
+      setGeoMismatch(attachedAudiencesHaveDisjointGeography(audienceFiles));
+      setOpenTiers({ silver: false, gold: false, diamond: false });
+      setExpandedLead(null);
+      syncAttachments(files, {
+        total: fused.total,
+        silver: fused.silver,
+        gold: fused.gold,
+        diamond: fused.diamond,
+        exportN,
+        fusedAt: Date.now(),
+      });
+    } finally {
+      setFusing(false);
     }
-    const audienceFiles = [...byAudience.values()];
-    const fused = fuseLeads(basket, audienceFiles, audience.tierPlan);
-    setResult(fused);
-    onFused?.(fused);
-    setGeoFilter(null);
-    setGeoMismatch(attachedAudiencesHaveDisjointGeography(audienceFiles));
-    setOpenTiers({ silver: false, gold: false, diamond: false });
-    setExpandedLead(null);
-    syncAttachments(files, {
-      total: fused.total,
-      silver: fused.silver,
-      gold: fused.gold,
-      diamond: fused.diamond,
-      exportN,
-      fusedAt: Date.now(),
-    });
   }
 
   function onExportNChange(v: number) {
@@ -481,6 +491,7 @@ export default function AudienceFusion({
 
   return (
     <div className="scroll-thin h-full overflow-y-auto px-8 py-6">
+      {fusing && <LoadingModal message="Fusing leads…" />}
       <div className="mx-auto flex max-w-3xl flex-col gap-6">
         <div className="flex items-baseline justify-between gap-3">
           <span className="text-[15px] text-ink">Audience Fusion</span>
@@ -602,11 +613,11 @@ export default function AudienceFusion({
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
-            disabled={attachedCount < 2}
+            disabled={attachedCount < 2 || fusing}
             onClick={runFuse}
             className={
               "rounded-lg border px-3 py-1.5 " +
-              (attachedCount < 2
+              (attachedCount < 2 || fusing
                 ? "border-line text-muted opacity-50"
                 : "border-line text-ink hover:bg-soft")
             }

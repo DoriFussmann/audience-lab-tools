@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { leadDisplayName, type FuseResult, type FusedLead } from "@/lib/fusion";
+import LoadingModal from "./LoadingModal";
 import { buildSummary, type FieldSchema } from "@/lib/fields";
 import {
   formatBasketForLetter,
@@ -508,6 +509,7 @@ export default function AudienceAudit({
 
   return (
     <div className="scroll-thin h-full overflow-y-auto px-8 py-6">
+      {loading && <LoadingModal message="Running audit…" />}
       <div className="mx-auto flex max-w-3xl flex-col gap-4">
         {/* Header */}
         <div className="flex items-baseline justify-between pb-1">
