@@ -6,7 +6,8 @@ import {
   attachedAudiencesHaveDisjointGeography,
   buildAttachmentMeta,
   buildFusionCsv,
-  downloadFusionCsv,
+  downloadCsvFile,
+  fusionTierFilename,
   filterLeadsByGeoState,
   formatFusionSummaryLine,
   fuseLeads,
@@ -427,8 +428,25 @@ export default function AudienceFusion({
 
   function download() {
     if (!viewResult || !audience) return;
-    const csv = buildFusionCsv(viewResult.leads, basket, exportN, includeExcluded);
-    downloadFusionCsv(projectName, csv, exportN, geoFilter);
+    const date = new Date();
+    const tiers: ("Diamond" | "Gold" | "Silver")[] = ["Diamond", "Gold", "Silver"];
+    const jobs = tiers
+      .map((tier) => ({
+        tier,
+        capped: viewResult.leads
+          .filter((l) => l.tier === tier)
+          .slice(0, Math.max(1, exportN)),
+      }))
+      .filter((j) => j.capped.length > 0);
+
+    if (!jobs.length) return;
+
+    jobs.forEach(({ tier, capped }, idx) => {
+      const csv = buildFusionCsv(capped, basket, capped.length, includeExcluded);
+      const filename = fusionTierFilename(projectName, tier, capped.length, geoFilter, date);
+      // Stagger to avoid the browser suppressing rapid multi-file downloads.
+      setTimeout(() => downloadCsvFile(filename, csv), idx * 250);
+    });
   }
 
   if (!ready) {
@@ -592,7 +610,7 @@ export default function AudienceFusion({
             Fuse
           </button>
           <label className="flex items-center gap-2 text-muted">
-            Leads to export
+            Max leads per tier
             <input
               type="number"
               min={1}
@@ -664,7 +682,7 @@ export default function AudienceFusion({
                   onClick={download}
                   className="rounded-lg border border-line px-3 py-1.5 text-muted hover:text-ink"
                 >
-                  Download CSV
+                  Download CSVs
                 </button>
               </div>
             </div>

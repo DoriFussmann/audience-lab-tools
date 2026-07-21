@@ -787,18 +787,36 @@ function stateFilenameToken(state: string): string {
   return slugFilename(state) || "geo";
 }
 
-export function downloadFusionCsv(
+/** Local calendar date as YYYY-MM-DD for filenames. */
+function dateFilenameToken(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * Filename for a single-tier fusion export:
+ * <project>-<tier>[-<state>]-<count>leads-<YYYY-MM-DD>.csv
+ */
+export function fusionTierFilename(
   projectName: string,
-  csv: string,
-  exportN: number,
-  stateFilter?: string | null
-) {
+  tier: "Silver" | "Gold" | "Diamond",
+  count: number,
+  stateFilter?: string | null,
+  date: Date = new Date()
+): string {
+  const statePart = stateFilter ? `-${stateFilenameToken(stateFilter)}` : "";
+  return `${slugFilename(projectName)}-${tier.toLowerCase()}${statePart}-${count}leads-${dateFilenameToken(date)}.csv`;
+}
+
+/** Trigger a browser download of CSV text under the given filename. */
+export function downloadCsvFile(filename: string, csv: string) {
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  const statePart = stateFilter ? `-${stateFilenameToken(stateFilter)}` : "";
-  a.download = `${slugFilename(projectName)}-fused${statePart}-top${exportN}.csv`;
+  a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
 }
