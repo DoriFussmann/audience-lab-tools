@@ -56,8 +56,9 @@ export default function LoginGate() {
         <div className="relative max-w-md">
           <div className="text-5xl leading-tight tracking-tight">Drop The Mic</div>
           <p className="mt-5 text-[15px] leading-relaxed text-white/70">
-            Define your audience. Find your crowd. Sketch who you&apos;re talking to, then match
-            them to the rooms where your message lands.
+            Define your audience. Find your crowd.
+            <br />
+            Sketch who you&apos;re talking to, then match them to the rooms where your message lands.
           </p>
         </div>
 
