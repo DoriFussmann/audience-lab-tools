@@ -138,6 +138,10 @@ export function migratePrompts(prompts: ChatPrompts): ChatPrompts {
   let define = prompts.define;
   let find = prompts.find;
   let letter = prompts.letter || DEFAULT_LETTER_PROMPT;
+  const audit =
+    typeof prompts.audit === "string" && prompts.audit.trim()
+      ? prompts.audit
+      : DEFAULT_AUDIT_PROMPT;
   if (!define.includes("Never show the user field labels, keys, or category names")) {
     define = DEFAULT_DEFINE_PROMPT;
   }
@@ -176,7 +180,7 @@ export function migratePrompts(prompts: ChatPrompts): ChatPrompts {
   if (!letter.trim() || !letter.includes("Produce one sequence of exactly 3 emails")) {
     letter = DEFAULT_LETTER_PROMPT;
   }
-  return { define, find, letter };
+  return { define, find, letter, audit };
 }
 
 const TOKEN_RE = /\{\{([a-zA-Z0-9_:]+)\}\}/g;
@@ -260,6 +264,7 @@ export function syncPromptsToSchema(prompts: ChatPrompts, schema: FieldSchema): 
     define: prune(prompts.define),
     find: prune(prompts.find),
     letter: prune(prompts.letter),
+    audit: prune(prompts.audit ?? DEFAULT_AUDIT_PROMPT),
   };
 }
 
