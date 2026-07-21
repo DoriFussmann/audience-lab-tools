@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 import LoadingModal from "./LoadingModal";
 import StageReset from "./StageReset";
 import {
@@ -395,12 +396,11 @@ export default function AudienceFusion({
     setResult(null);
   }
 
-  async function runFuse() {
-    if (!audience || attachedCount < 2) return;
-    setFusing(true);
-    // Yield one frame so React can paint the loading modal before fuseLeads()
-    // blocks the main thread with synchronous CPU work.
-    await new Promise((resolve) => setTimeout(resolve, 16));
+  function runFuse() {
+    if (!audience || attachedCount < 1) return;
+    // flushSync commits the state update synchronously so the modal is
+    // painted before fuseLeads() blocks the main thread.
+    flushSync(() => setFusing(true));
     try {
       const assigned = files.filter((f) => f.taxonomyId && !f.error && f.rows.length);
       const byAudience = new Map<string, { taxonomyId: string; rows: typeof assigned[0]["rows"] }>();
@@ -613,11 +613,11 @@ export default function AudienceFusion({
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
-            disabled={attachedCount < 2 || fusing}
+            disabled={attachedCount < 1 || fusing}
             onClick={runFuse}
             className={
               "rounded-lg border px-3 py-1.5 " +
-              (attachedCount < 2 || fusing
+              (attachedCount < 1 || fusing
                 ? "border-line text-muted opacity-50"
                 : "border-line text-ink hover:bg-soft")
             }
