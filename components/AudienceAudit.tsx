@@ -35,7 +35,7 @@ import type { PseudoLead } from "@/app/api/audit/route";
 //   Addresses:    ADDRESS, STREET_ADDRESS, MAILING_ADDRESS
 //   Social/Web:   LINKEDIN_URL
 //   Exact dates:  DOB, BIRTH_DATE, BIRTHDATE, DATE_OF_BIRTH
-//   All SKIPTRACE_* columns without exception (SKIPTRACE_IP,
+//   SKIPTRACE_* except SKIPTRACE_MATCH_SCORE (SKIPTRACE_IP,
 //                 SKIPTRACE_ETHNIC_CODE, SKIPTRACE_RELIGION_CODE,
 //                 SKIPTRACE_CREDIT_RATING, SKIPTRACE_AGE,
 //                 SKIPTRACE_AGE_RANGE, SKIPTRACE_NET_WORTH, etc.)
@@ -51,6 +51,53 @@ function readField(fields: Record<string, string>, ...keys: string[]): string {
   return "—";
 }
 
+/** Parse dollar amounts from range strings like "$100,000 to $149,000" or "$50k-$75k". */
+function parseMoneyAmounts(raw: string): number[] {
+  const amounts: number[] = [];
+  const re = /\$?\s*([\d,]+(?:\.\d+)?)\s*([kKmMbB])?/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(raw)) !== null) {
+    let n = parseFloat(m[1].replace(/,/g, ""));
+    if (!Number.isFinite(n)) continue;
+    const suf = (m[2] || "").toLowerCase();
+    if (suf === "k") n *= 1_000;
+    else if (suf === "m") n *= 1_000_000;
+    else if (suf === "b") n *= 1_000_000_000;
+    amounts.push(n);
+  }
+  return amounts;
+}
+
+function formatCompactDollars(n: number): string {
+  if (n >= 1_000_000) {
+    const m = n / 1_000_000;
+    const s = Number.isInteger(m) ? String(m) : m.toFixed(1).replace(/\.0$/, "");
+    return `$${s}M`;
+  }
+  return `$${Math.round(n / 1_000)}k`;
+}
+
+/** Midpoint of a money range → "~$125k". Falls back to raw if unparseable. */
+function averageMoneyRange(raw: string): string {
+  if (!raw || raw === "—") return "—";
+  const amounts = parseMoneyAmounts(raw);
+  if (!amounts.length) return raw;
+  const avg =
+    amounts.length === 1 ? amounts[0] : (amounts[0] + amounts[1]) / 2;
+  return `~${formatCompactDollars(avg)}`;
+}
+
+/** Midpoint of an age range → "~35". Exact ages pass through as "~N". */
+function averageAgeDisplay(raw: string): string {
+  if (!raw || raw === "—") return "—";
+  const trimmed = raw.trim();
+  if (/^\d+$/.test(trimmed)) return `~${trimmed}`;
+  const nums = [...trimmed.matchAll(/\d+/g)].map((x) => parseInt(x[0], 10));
+  if (nums.length >= 2) return `~${Math.round((nums[0] + nums[1]) / 2)}`;
+  if (nums.length === 1) return `~${nums[0]}`;
+  return raw;
+}
+
 function toAgeRange(fields: Record<string, string>): string {
   // Non-skiptrace age columns only.
   const age = readField(fields, "AGE");
@@ -58,11 +105,113 @@ function toAgeRange(fields: Record<string, string>): string {
     const n = parseInt(age, 10);
     if (!isNaN(n)) {
       const lo = Math.floor(n / 10) * 10;
-      return `${lo}–${lo + 9}`;
+      return averageAgeDisplay(`${lo}–${lo + 9}`);
     }
-    return age;
+    return averageAgeDisplay(age);
   }
-  return readField(fields, "AGE_RANGE", "AGE_GROUP");
+  return averageAgeDisplay(readField(fields, "AGE_RANGE", "AGE_GROUP"));
+}
+
+/** SKIPTRACE_MATCH_SCORE is 0–10; show as 0–100%. Values >10 treated as already %. */
+function toMatchScorePercent(fields: Record<string, string>): string {
+  const raw = readField(fields, "SKIPTRACE_MATCH_SCORE", "MATCH_SCORE");
+  if (raw === "—") return "—";
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return "—";
+  const pct = n <= 10 ? Math.round(n * 10) : Math.round(n);
+  return `${Math.max(0, Math.min(100, pct))}%`;
+}
+
+function toHomeownerYN(fields: Record<string, string>): string {
+  const raw = readField(
+    fields,
+    "HOMEOWNER",
+    "HOME_OWNER",
+    "HOMEOWNER_STATUS",
+    "OWNER_RENTER"
+  );
+  if (raw === "—") return "—";
+  const s = raw.toLowerCase().trim();
+  if (
+    s === "y" ||
+    s === "yes" ||
+    s === "true" ||
+    s === "1" ||
+    s === "o" ||
+    s === "owner" ||
+    s === "homeowner" ||
+    s.includes("owner")
+  ) {
+    return "Y";
+  }
+  if (
+    s === "n" ||
+    s === "no" ||
+    s === "false" ||
+    s === "0" ||
+    s === "r" ||
+    s === "renter" ||
+    s === "tenant" ||
+    s.includes("rent")
+  ) {
+    return "N";
+  }
+  return raw;
+}
+
+/** "Single", "Married", or "Married + 2" when children count is known. */
+function toMaritalStatus(fields: Record<string, string>): string {
+  const status = readField(
+    fields,
+    "MARITAL_STATUS",
+    "MARITAL",
+    "MARRIED",
+    "MARITALSTATUS"
+  );
+  const childrenRaw = readField(
+    fields,
+    "NUMBER_OF_CHILDREN",
+    "CHILDREN_COUNT",
+    "NUM_CHILDREN",
+    "CHILDREN",
+    "CHILD_COUNT"
+  );
+
+  let kids: number | null = null;
+  if (childrenRaw !== "—") {
+    const n = parseInt(childrenRaw.replace(/[^\d]/g, ""), 10);
+    if (!isNaN(n)) kids = n;
+  }
+
+  if (status === "—" && kids === null) return "—";
+
+  const s = status.toLowerCase();
+  const married =
+    s.includes("married") ||
+    s === "m" ||
+    s === "y" ||
+    s === "yes" ||
+    s === "true" ||
+    s === "1";
+  const single =
+    s.includes("single") ||
+    s.includes("divorced") ||
+    s.includes("widowed") ||
+    s.includes("never") ||
+    s === "u" ||
+    s === "n" ||
+    s === "no" ||
+    s === "false" ||
+    s === "0";
+
+  if (married) {
+    return kids !== null && kids > 0 ? `Married + ${kids}` : "Married";
+  }
+  if (single) return "Single";
+  if (status !== "—") {
+    return kids !== null && kids > 0 ? `${status} + ${kids}` : status;
+  }
+  return "—";
 }
 
 function pseudonymizeLead(
@@ -80,21 +229,26 @@ function pseudonymizeLead(
     })
     .filter((x) => x !== null) as { name: string; role: string }[];
 
-  // Each field reads only from the named keys. No SKIPTRACE_* columns appear
-  // anywhere below; LINKEDIN_URL, UUID, names, emails, phones, addresses, and
-  // exact dates are absent from every readField call.
+  // Each field reads only from the named keys. SKIPTRACE_* is omitted except
+  // SKIPTRACE_MATCH_SCORE. Names, emails, phones, addresses, and exact dates
+  // are absent from every readField call.
   return {
     label,
     tier: lead.tier,
+    matchScore: toMatchScorePercent(f),
     ageRange: toAgeRange(f),
-    netWorth: readField(f, "NET_WORTH_RANGE", "NET_WORTH", "NETWORTH_RANGE"),
-    incomeRange: readField(f, "INCOME_RANGE", "HOUSEHOLD_INCOME", "ANNUAL_INCOME", "INCOME"),
+    netWorth: averageMoneyRange(
+      readField(f, "NET_WORTH_RANGE", "NET_WORTH", "NETWORTH_RANGE")
+    ),
+    incomeRange: averageMoneyRange(
+      readField(f, "INCOME_RANGE", "HOUSEHOLD_INCOME", "ANNUAL_INCOME", "INCOME")
+    ),
     jobTitle: readField(f, "JOB_TITLE"),
     seniority: readField(f, "SENIORITY", "JOB_LEVEL", "MANAGEMENT_LEVEL", "LEVEL"),
     industry: readField(f, "INDUSTRY", "COMPANY_INDUSTRY", "SIC_DESCRIPTION", "NAICS_DESCRIPTION"),
     companySize: readField(f, "COMPANY_SIZE", "EMPLOYEE_COUNT", "EMPLOYEES", "EMPLOYEE_RANGE"),
-    state: lead.geoState || "—",
-    homeowner: readField(f, "HOMEOWNER", "HOME_OWNER", "HOMEOWNER_STATUS", "OWNER_RENTER"),
+    homeowner: toHomeownerYN(f),
+    maritalStatus: toMaritalStatus(f),
     matchedAudiences,
   };
 }
@@ -186,9 +340,9 @@ function TierSection({
 
 function KpiPill({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="min-w-0 flex flex-col gap-0.5">
       <span className="text-[11px] text-muted">{label}</span>
-      <span className="text-[13px] text-ink">{value}</span>
+      <span className="truncate text-[13px] text-ink">{value}</span>
     </div>
   );
 }
@@ -221,8 +375,11 @@ function LeadCard({ mode }: { mode: LeadCardMode }) {
   const audienceCount =
     mode.kind === "session" ? mode.lead.audienceIds.length : null;
 
+  const matchScore =
+    mode.kind === "session" ? mode.pseudo.matchScore : null;
+
   return (
-    <div className="flex flex-col overflow-hidden rounded-lg border border-line bg-white">
+    <div className="flex h-full min-w-0 w-full flex-col overflow-hidden rounded-lg border border-line bg-white">
       {/* Card header */}
       <button
         type="button"
@@ -242,9 +399,14 @@ function LeadCard({ mode }: { mode: LeadCardMode }) {
             <span className="text-[11px] text-muted">{label}</span>
           )}
         </div>
-        <span className="flex shrink-0 items-center gap-2 pt-0.5">
-          <span className="text-muted text-[12px]">{tier}</span>
-          <Chevron open={open} />
+        <span className="flex shrink-0 flex-col items-end gap-0.5 pt-0.5">
+          {matchScore && matchScore !== "—" && (
+            <span className="text-[13px] text-ink">{matchScore} match</span>
+          )}
+          <span className="flex items-center gap-2">
+            <span className="text-muted text-[12px]">{tier}</span>
+            <Chevron open={open} />
+          </span>
         </span>
       </button>
 
@@ -254,9 +416,9 @@ function LeadCard({ mode }: { mode: LeadCardMode }) {
           <KpiPill label="Age" value={pseudo.ageRange} />
           <KpiPill label="Net worth" value={pseudo.netWorth} />
           <KpiPill label="Income" value={pseudo.incomeRange} />
+          <KpiPill label="Homeowner" value={pseudo.homeowner} />
+          <KpiPill label="Marital" value={pseudo.maritalStatus} />
           <KpiPill label="Industry" value={pseudo.industry} />
-          <KpiPill label="State" value={pseudo.state} />
-          <KpiPill label="Audiences" value={String(audienceCount ?? "—")} />
         </div>
       )}
 
@@ -265,15 +427,16 @@ function LeadCard({ mode }: { mode: LeadCardMode }) {
         {pseudo ? (
           <div className="flex flex-col gap-3 border-t border-line px-3 py-2.5">
             <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-              <KpiPill label="Age range" value={pseudo.ageRange} />
+              <KpiPill label="Age" value={pseudo.ageRange} />
               <KpiPill label="Net worth" value={pseudo.netWorth} />
-              <KpiPill label="Income range" value={pseudo.incomeRange} />
+              <KpiPill label="Income" value={pseudo.incomeRange} />
+              <KpiPill label="Homeowner" value={pseudo.homeowner} />
+              <KpiPill label="Marital" value={pseudo.maritalStatus} />
               <KpiPill label="Job title" value={pseudo.jobTitle} />
               <KpiPill label="Seniority" value={pseudo.seniority} />
               <KpiPill label="Industry" value={pseudo.industry} />
               <KpiPill label="Company size" value={pseudo.companySize} />
-              <KpiPill label="State" value={pseudo.state} />
-              <KpiPill label="Homeowner" value={pseudo.homeowner} />
+              <KpiPill label="Audiences" value={String(audienceCount ?? "—")} />
             </div>
             {pseudo.matchedAudiences.length > 0 && (
               <div className="flex flex-col gap-1 border-t border-line pt-2">
@@ -428,7 +591,7 @@ export default function AudienceAudit({
   if (!fuseResult && !persistedAudit) {
     return (
       <div className="scroll-thin h-full overflow-y-auto px-8 py-6">
-        <div className="mx-auto max-w-3xl">
+        <div className="mx-auto max-w-6xl">
           <span className="text-muted">Run Audience Fusion first — audit needs the fused leads in memory.</span>
         </div>
       </div>
@@ -440,13 +603,14 @@ export default function AudienceAudit({
     const runDate = new Date(persistedAudit.runAt).toLocaleDateString();
     return (
       <div className="scroll-thin h-full overflow-y-auto px-8 py-6">
-        <div className="mx-auto flex max-w-3xl flex-col gap-4">
+        <div className="mx-auto flex max-w-6xl flex-col gap-4">
           <div className="flex items-baseline justify-between pb-1">
             <span className="text-[15px] text-ink">Audience Audit</span>
             <span className="text-muted">Run {runDate} · read-only</span>
           </div>
           <span className="text-[12px] text-muted">
-            Sample details unavailable — re-run Audience Fusion to audit again.
+            Saved audit bottom-lines for this project. Re-run Audience Fusion only if you want a
+            fresh sample or new verdicts.
           </span>
           <p className="text-[11px] text-muted">
             A 9-lead sample is directional, not statistical — reshuffle a few times before acting on patterns.
@@ -461,9 +625,8 @@ export default function AudienceAudit({
                 header={tier}
                 open={openTiers[tier]}
                 onToggle={() => setOpenTiers((p) => ({ ...p, [tier]: !p[tier] }))}
-                className={tier === "Gold" ? "ml-5" : tier === "Diamond" ? "ml-10" : ""}
               >
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:items-stretch">
                   {tierLeads.map((r) => (
                     <LeadCard key={r.label} mode={{ kind: "readonly", result: r }} />
                   ))}
@@ -510,7 +673,7 @@ export default function AudienceAudit({
   return (
     <div className="scroll-thin h-full overflow-y-auto px-8 py-6">
       {loading && <LoadingModal message="Running audit…" />}
-      <div className="mx-auto flex max-w-3xl flex-col gap-4">
+      <div className="mx-auto flex max-w-6xl flex-col gap-4">
         {/* Header */}
         <div className="flex items-baseline justify-between pb-1">
           <span className="text-[15px] text-ink">Audience Audit</span>
@@ -551,14 +714,14 @@ export default function AudienceAudit({
           </span>
         )}
 
-        {/* Tier sections — nested funnel geometry */}
+        {/* Tier sections — equal-width cards across Silver / Gold / Diamond */}
         <TierSection
           header={`Silver · ${sample.Silver.length} sampled`}
           open={openTiers.Silver}
           onToggle={() => setOpenTiers((p) => ({ ...p, Silver: !p.Silver }))}
         >
           {sample.Silver.length > 0 ? (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:items-stretch">
               {sample.Silver.map((lead, idx) => {
                 const lbl = labelForIndex("Silver", idx);
                 const pseudo = pseudonymizeLead(lead, lbl, audience!);
@@ -575,55 +738,51 @@ export default function AudienceAudit({
           )}
         </TierSection>
 
-        <div className="ml-5 flex flex-col gap-2">
-          <TierSection
-            header={`Gold · ${sample.Gold.length} sampled`}
-            open={openTiers.Gold}
-            onToggle={() => setOpenTiers((p) => ({ ...p, Gold: !p.Gold }))}
-          >
-            {sample.Gold.length > 0 ? (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                {sample.Gold.map((lead, idx) => {
-                  const lbl = labelForIndex("Gold", idx);
-                  const pseudo = pseudonymizeLead(lead, lbl, audience!);
-                  return (
-                    <LeadCard
-                      key={lbl}
-                      mode={{ kind: "session", lead, pseudo, verdict: verdictFor(lbl) }}
-                    />
-                  );
-                })}
-              </div>
-            ) : (
-              <span className="text-muted">No Gold leads in fused result.</span>
-            )}
-          </TierSection>
+        <TierSection
+          header={`Gold · ${sample.Gold.length} sampled`}
+          open={openTiers.Gold}
+          onToggle={() => setOpenTiers((p) => ({ ...p, Gold: !p.Gold }))}
+        >
+          {sample.Gold.length > 0 ? (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:items-stretch">
+              {sample.Gold.map((lead, idx) => {
+                const lbl = labelForIndex("Gold", idx);
+                const pseudo = pseudonymizeLead(lead, lbl, audience!);
+                return (
+                  <LeadCard
+                    key={lbl}
+                    mode={{ kind: "session", lead, pseudo, verdict: verdictFor(lbl) }}
+                  />
+                );
+              })}
+            </div>
+          ) : (
+            <span className="text-muted">No Gold leads in fused result.</span>
+          )}
+        </TierSection>
 
-          <div className="ml-5">
-            <TierSection
-              header={`Diamond · ${sample.Diamond.length} sampled`}
-              open={openTiers.Diamond}
-              onToggle={() => setOpenTiers((p) => ({ ...p, Diamond: !p.Diamond }))}
-            >
-              {sample.Diamond.length > 0 ? (
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                  {sample.Diamond.map((lead, idx) => {
-                    const lbl = labelForIndex("Diamond", idx);
-                    const pseudo = pseudonymizeLead(lead, lbl, audience!);
-                    return (
-                      <LeadCard
-                        key={lbl}
-                        mode={{ kind: "session", lead, pseudo, verdict: verdictFor(lbl) }}
-                      />
-                    );
-                  })}
-                </div>
-              ) : (
-                <span className="text-muted">No Diamond leads in fused result.</span>
-              )}
-            </TierSection>
-          </div>
-        </div>
+        <TierSection
+          header={`Diamond · ${sample.Diamond.length} sampled`}
+          open={openTiers.Diamond}
+          onToggle={() => setOpenTiers((p) => ({ ...p, Diamond: !p.Diamond }))}
+        >
+          {sample.Diamond.length > 0 ? (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:items-stretch">
+              {sample.Diamond.map((lead, idx) => {
+                const lbl = labelForIndex("Diamond", idx);
+                const pseudo = pseudonymizeLead(lead, lbl, audience!);
+                return (
+                  <LeadCard
+                    key={lbl}
+                    mode={{ kind: "session", lead, pseudo, verdict: verdictFor(lbl) }}
+                  />
+                );
+              })}
+            </div>
+          ) : (
+            <span className="text-muted">No Diamond leads in fused result.</span>
+          )}
+        </TierSection>
 
         {/* Patterns panel — only after audit */}
         {patterns && (

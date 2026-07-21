@@ -11,6 +11,7 @@ export const maxDuration = 60;
 export type PseudoLead = {
   label: string;
   tier: "Silver" | "Gold" | "Diamond";
+  matchScore: string;
   ageRange: string;
   netWorth: string;
   incomeRange: string;
@@ -18,8 +19,8 @@ export type PseudoLead = {
   seniority: string;
   industry: string;
   companySize: string;
-  state: string;
   homeowner: string;
+  maritalStatus: string;
   matchedAudiences: { name: string; role: string }[];
 };
 
@@ -62,15 +63,16 @@ export async function POST(req: Request) {
           .join(", ");
         return [
           `${l.label} [${l.tier}]`,
-          `  Age range: ${l.ageRange}`,
+          `  Match score: ${l.matchScore}`,
+          `  Age: ${l.ageRange}`,
           `  Net worth: ${l.netWorth}`,
-          `  Income range: ${l.incomeRange}`,
+          `  Income: ${l.incomeRange}`,
           `  Job title: ${l.jobTitle}`,
           `  Seniority: ${l.seniority}`,
           `  Industry: ${l.industry}`,
           `  Company size: ${l.companySize}`,
-          `  State: ${l.state}`,
           `  Homeowner: ${l.homeowner}`,
+          `  Marital status: ${l.maritalStatus}`,
           `  Matched audiences: ${audiences || "none"}`,
         ].join("\n");
       })

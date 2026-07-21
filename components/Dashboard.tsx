@@ -193,8 +193,8 @@ export default function Dashboard({
   const letterStatus = letterDone ? "Generated" : "Not started";
   const fusionStatus = !findDone
     ? "Waiting on Find"
-    : fusionNeedsReattach
-    ? "Re-attach needed"
+    : fusionDone && fusionNeedsReattach
+    ? "Saved · re-attach to export"
     : fusionDone
     ? "Fused"
     : "Not started";
@@ -350,7 +350,7 @@ export default function Dashboard({
           title="Audience Fusion"
           meta={fusionMeta}
           status={fusionStatus}
-          statusAccent={fusionDone && !fusionNeedsReattach}
+          statusAccent={fusionDone}
           open={!!openSections.fusion}
           onToggle={() => toggle("fusion")}
         >
@@ -358,7 +358,9 @@ export default function Dashboard({
             <div className="text-muted">
               {fusionSummary.total} unique leads · {fusionSummary.silver} Silver ·{" "}
               {fusionSummary.gold} Gold · {fusionSummary.diamond} Diamond
-              {fusionNeedsReattach ? " · re-attach CSVs to fuse again" : ""}
+              {fusionNeedsReattach
+                ? " · re-attach CSVs only if you need to export or re-fuse"
+                : ""}
             </div>
           )}
           <div>
@@ -378,7 +380,7 @@ export default function Dashboard({
               ? audit.patterns.overall.slice(0, 120) + (audit.patterns.overall.length > 120 ? "…" : "")
               : fusionDone
               ? "Run audit after fusing leads"
-              : "Requires a completed fusion in the current session"
+              : "Requires fusion bottom-lines (run Fusion once)"
           }
           status={audit ? `Run ${new Date(audit.runAt).toLocaleDateString()}` : "Not run"}
           statusAccent={!!audit}

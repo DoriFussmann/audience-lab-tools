@@ -641,6 +641,21 @@ export default function AudienceFusion({
           )}
         </div>
 
+        {!result && fusion.summary && (
+          <div className="flex flex-col gap-2 border border-line px-3 py-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <span className="text-ink">{formatFusionSummaryLine(fusion.summary)}</span>
+              <span className="text-muted">
+                Saved {new Date(fusion.summary.fusedAt).toLocaleDateString()}
+              </span>
+            </div>
+            <span className="text-muted">
+              Lead files are not stored — re-attach CSVs to fuse again, export, or run a new
+              audit. Tier counts and audit bottom-lines stay with this project.
+            </span>
+          </div>
+        )}
+
         {result && viewResult && (
           <div className="flex flex-col gap-4">
             {geoMismatch && (

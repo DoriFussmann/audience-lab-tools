@@ -54,10 +54,15 @@ import {
 } from "@/lib/stageData";
 import {
   clearLegacyProjects,
+  clearStageResults,
   hasMigratedLegacyProjects,
+  loadLastProjectId,
   loadProjects,
   markLegacyProjectsMigrated,
+  mergeStageResults,
   newId,
+  saveLastProjectId,
+  saveStageResults,
 } from "@/lib/store";
 import { createClient } from "@/lib/supabase/client";
 import { parseTaxonomy } from "@/lib/taxonomy";
@@ -134,6 +139,8 @@ export default function Page() {
 
   const current = projects.find((p) => p.id === currentId) || null;
   const skipSave = useRef(false);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingSave = useRef<ProjectListItem | null>(null);
   const isSuperAdmin = !!profile?.is_super_admin;
 
   const stageState = {
@@ -213,20 +220,24 @@ export default function Page() {
         setPrompts(nextPrompts);
 
         let list = await fetchProjects(supabase, user.id);
-        list = list.map((p) => ({
-          ...p,
-          define: {
-            ...p.define,
-            fields: reconcileFields(p.define?.fields || emptyFields(nextSchema), nextSchema),
-          },
-          find: {
-            messages: p.find?.messages || [],
-            audience: normalizeSavedAudience(p.find?.audience),
-            taxonomyName: p.find?.taxonomyName || "",
-          },
-          letter: normalizeProjectLetter(p.letter),
-          fusion: markFusionNeedsReattach(normalizeProjectFusion(p.fusion)),
-        }));
+        list = list.map((p) => {
+          const merged = mergeStageResults(p.id, p.fusion, p.audit);
+          return {
+            ...p,
+            define: {
+              ...p.define,
+              fields: reconcileFields(p.define?.fields || emptyFields(nextSchema), nextSchema),
+            },
+            find: {
+              messages: p.find?.messages || [],
+              audience: normalizeSavedAudience(p.find?.audience),
+              taxonomyName: p.find?.taxonomyName || "",
+            },
+            letter: normalizeProjectLetter(p.letter),
+            fusion: markFusionNeedsReattach(merged.fusion),
+            audit: merged.audit,
+          };
+        });
 
         // One-time legacy localStorage import
         if (
@@ -274,6 +285,23 @@ export default function Page() {
         if (cancelled) return;
         setProjects(list);
 
+        // Re-open last project after refresh (bottom-lines already merged above).
+        const lastId = loadLastProjectId();
+        const reopen = lastId ? list.find((p) => p.id === lastId) : null;
+        if (reopen) {
+          skipSave.current = true;
+          setFieldsState(reconcileFields(reopen.define.fields, nextSchema));
+          setDefineMessagesState(reopen.define.messages);
+          setFindMessagesState(reopen.find.messages);
+          setAudience(normalizeSavedAudience(reopen.find.audience));
+          setLetterState(normalizeProjectLetter(reopen.letter));
+          setFusionState(markFusionNeedsReattach(normalizeProjectFusion(reopen.fusion)));
+          setAuditState(reopen.audit ?? null);
+          setFuseResult(null);
+          setCurrentId(reopen.id);
+          setTab("dashboard");
+        }
+
         // Warm taxonomy cache (Find will refresh on enter if needed)
         try {
           const tax = await ensureTaxonomyCached(supabase);
@@ -297,6 +325,18 @@ export default function Page() {
     };
   }, [user]);
 
+  // Remember last open project across refresh
+  useEffect(() => {
+    if (!accountReady) return;
+    saveLastProjectId(currentId);
+  }, [currentId, accountReady]);
+
+  // Mirror fusion/audit bottom-lines locally (survives refresh even if cloud save is mid-flight)
+  useEffect(() => {
+    if (!currentId) return;
+    saveStageResults(currentId, fusion, auditState);
+  }, [currentId, fusion, auditState]);
+
   // Autosave current project → Supabase
   useEffect(() => {
     if (!user || !currentId || !current) return;
@@ -305,31 +345,61 @@ export default function Page() {
       setSaved(true);
       return;
     }
+
+    const nextProject: ProjectListItem = {
+      ...current,
+      updatedAt: Date.now(),
+      define: { fields, messages: defineMessages },
+      find: { messages: findMessages, audience, taxonomyName },
+      letter,
+      fusion,
+      audit: auditState,
+      name: current.name,
+    };
+    pendingSave.current = nextProject;
+    setProjects((prev) => prev.map((p) => (p.id === currentId ? nextProject : p)));
     setSaved(false);
-    const t = setTimeout(async () => {
-      const nextProject: ProjectListItem = {
-        ...current,
-        updatedAt: Date.now(),
-        define: { fields, messages: defineMessages },
-        find: { messages: findMessages, audience, taxonomyName },
-        letter,
-        fusion,
-        audit: auditState,
-        name: current.name,
-      };
-      setProjects((prev) => prev.map((p) => (p.id === currentId ? nextProject : p)));
+
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      const payload = pendingSave.current;
+      if (!payload || payload.id !== currentId) return;
       try {
         const supabase = createClient();
-        await upsertProject(supabase, nextProject, current.ownerId);
-        setSaved(true);
+        await upsertProject(supabase, payload, payload.ownerId);
+        saveStageResults(payload.id, payload.fusion, payload.audit ?? null);
+        if (pendingSave.current?.updatedAt === payload.updatedAt) {
+          pendingSave.current = null;
+          setSaved(true);
+        }
       } catch (e) {
         console.error(e);
         flash("Save failed");
         setSaved(false);
       }
     }, 400);
-    return () => clearTimeout(t);
+
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
   }, [currentId, fields, defineMessages, findMessages, audience, taxonomyName, letter, fusion, auditState, user]);
+
+  // Flush pending save on tab close / refresh so fusion+audit aren't lost mid-debounce
+  useEffect(() => {
+    function flush() {
+      const payload = pendingSave.current;
+      if (!payload || !user) return;
+      saveStageResults(payload.id, payload.fusion, payload.audit ?? null);
+      const supabase = createClient();
+      void upsertProject(supabase, payload, payload.ownerId);
+    }
+    window.addEventListener("pagehide", flush);
+    window.addEventListener("beforeunload", flush);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("beforeunload", flush);
+    };
+  }, [user]);
 
   // Refresh taxonomy when entering Find
   useEffect(() => {
@@ -459,20 +529,22 @@ export default function Page() {
     setFusionState(emptyProjectFusion());
     setAuditState(null);
     setFuseResult(null);
+    saveStageResults(project.id, emptyProjectFusion(), null);
     setCurrentId(project.id);
     setMenuOpen(false);
     setTab("define");
   }
 
   function openProject(p: ProjectListItem) {
+    const merged = mergeStageResults(p.id, p.fusion, p.audit);
     skipSave.current = true;
     setFieldsState(reconcileFields(p.define.fields, schema));
     setDefineMessagesState(p.define.messages);
     setFindMessagesState(p.find.messages);
     setAudience(normalizeSavedAudience(p.find.audience));
     setLetterState(normalizeProjectLetter(p.letter));
-    setFusionState(markFusionNeedsReattach(normalizeProjectFusion(p.fusion)));
-    setAuditState(p.audit ?? null);
+    setFusionState(markFusionNeedsReattach(merged.fusion));
+    setAuditState(merged.audit);
     setFuseResult(null);
     setCurrentId(p.id);
     setMenuOpen(false);
@@ -489,8 +561,12 @@ export default function Page() {
       flash("Could not delete project");
       return;
     }
+    clearStageResults(p.id);
     setProjects((prev) => prev.filter((x) => x.id !== p.id));
-    if (currentId === p.id) setCurrentId("");
+    if (currentId === p.id) {
+      setCurrentId("");
+      saveLastProjectId("");
+    }
   }
 
   async function signOut() {
@@ -520,6 +596,8 @@ export default function Page() {
       setFusionState(emptyProjectFusion());
       setFusionResetKey((k) => k + 1);
       setFuseResult(null);
+      setAuditState(null);
+      if (currentId) saveStageResults(currentId, emptyProjectFusion(), null);
     }
   }
 

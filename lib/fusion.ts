@@ -869,7 +869,7 @@ export function matchTaxonomyIdInFilename(
   return null;
 }
 
-export function formatFusionSummaryLine(result: FuseResult): string {
+export function formatFusionSummaryLine(result: FuseResult | FusionSummary): string {
   return `${result.total} unique leads · ${result.silver} Silver · ${result.gold} Gold · ${result.diamond} Diamond`;
 }
 
