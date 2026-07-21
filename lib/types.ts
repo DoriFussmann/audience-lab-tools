@@ -135,6 +135,28 @@ export type ProjectFusion = {
   exportN: number;
 };
 
+export type AuditLeadResult = {
+  label: string;
+  tier: "Silver" | "Gold" | "Diamond";
+  fitPercent: number;
+  whyFits: string;
+  whyNot: string;
+  recommendation: string;
+};
+
+export type AuditPatterns = {
+  highFitSources: string;
+  lowFitSources: string;
+  basketAdvice: string;
+  overall: string;
+};
+
+export type ProjectAudit = {
+  leads: AuditLeadResult[];
+  patterns: AuditPatterns;
+  runAt: number;
+};
+
 export type Project = {
   id: string;
   name: string;
@@ -151,4 +173,5 @@ export type Project = {
   };
   letter: ProjectLetter;
   fusion: ProjectFusion;
+  audit: ProjectAudit | null;
 };

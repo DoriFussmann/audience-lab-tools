@@ -5,7 +5,7 @@ import CopyBox from "./CopyBox";
 import { allDone, categoryDone, categoryFields, type FieldSchema } from "@/lib/fields";
 import { materialsLinksList } from "@/lib/letter";
 import { buildProjectSummary } from "@/lib/summary";
-import type { FieldMap, ProjectFusion, ProjectLetter, SavedAudience } from "@/lib/types";
+import type { FieldMap, ProjectAudit, ProjectFusion, ProjectLetter, SavedAudience } from "@/lib/types";
 
 function Chevron({ open }: { open: boolean }) {
   return (
@@ -149,6 +149,7 @@ export default function Dashboard({
   audience,
   letter,
   fusion,
+  audit,
   schema,
   onOpen,
 }: {
@@ -157,8 +158,9 @@ export default function Dashboard({
   audience: SavedAudience | null;
   letter: ProjectLetter;
   fusion: ProjectFusion;
+  audit: ProjectAudit | null;
   schema: FieldSchema;
-  onOpen: (tab: "define" | "find" | "letter" | "fusion") => void;
+  onOpen: (tab: "define" | "find" | "letter" | "fusion" | "audit") => void;
 }) {
   const [projectSummary, setProjectSummary] = useState("");
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
@@ -362,6 +364,35 @@ export default function Dashboard({
           <div>
             <button
               onClick={() => onOpen("fusion")}
+              className="rounded-lg border border-line px-3 py-1.5 text-muted hover:text-ink"
+            >
+              Open
+            </button>
+          </div>
+        </CollapsibleCard>
+
+        <CollapsibleCard
+          title="Audience Audit"
+          meta={
+            audit
+              ? audit.patterns.overall.slice(0, 120) + (audit.patterns.overall.length > 120 ? "…" : "")
+              : fusionDone
+              ? "Run audit after fusing leads"
+              : "Requires a completed fusion in the current session"
+          }
+          status={audit ? `Run ${new Date(audit.runAt).toLocaleDateString()}` : "Not run"}
+          statusAccent={!!audit}
+          open={!!openSections.audit}
+          onToggle={() => toggle("audit")}
+        >
+          {audit && (
+            <div className="text-muted">
+              {audit.leads.length} leads audited · {audit.leads.filter((l) => l.fitPercent >= 70).length} strong fits
+            </div>
+          )}
+          <div>
+            <button
+              onClick={() => onOpen("audit")}
               className="rounded-lg border border-line px-3 py-1.5 text-muted hover:text-ink"
             >
               Open

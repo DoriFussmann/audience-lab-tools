@@ -22,6 +22,7 @@ export type ChatPrompts = {
   define: string;
   find: string;
   letter: string;
+  audit?: string;
 };
 
 export const DEFINE_SYSTEM_TOKENS: PromptToken[] = [
@@ -115,10 +116,18 @@ Rules:
 - Voice: write like one busy person to another. Short sentences. No marketing language.
 Respond only with JSON: { "tiers": [ { "tier": "Silver|Gold|Diamond", "emails": [ { "day": n, "subject": "...", "body": "..." } ] } ], "note": "one line: days are campaign days (Mon-Fri); stop the sequence for any prospect who replies" }`;
 
+export const DEFAULT_AUDIT_PROMPT = `You audit a sample of real leads against a target-audience definition. You receive: the audience definition (offer, journey search phrases, precision criteria including false-positive profiles, lead attributes, letter data), the basket of intent audiences with roles, the tier rules, and a sample of pseudonymized leads (Lead A, Lead B, ...) each with demographic/professional attributes and their matched audiences.
+For each lead, judge how well this person matches the defined target, using the attributes and their matched audiences as evidence. Consider capital/means where relevant (net worth, income vs the offer), life stage (age vs the move being sold), professional context (title, industry vs the persona), and whether they resemble the defined false positives.
+Respond only with JSON:
+{ "leads": [ { "label": "Lead A", "tier": "Silver|Gold|Diamond", "fitPercent": 0-100, "whyFits": "...", "whyNot": "...", "recommendation": "..." } ],
+  "patterns": { "highFitSources": "which audiences the strong fits came from and why that makes sense", "lowFitSources": "which audiences the weak fits came from", "basketAdvice": "concrete recommendation about the basket, e.g. an audience to reconsider or a pull setting to change", "overall": "one-paragraph verdict on whether this fused list matches the defined audience" } }
+Rules: be blunt; a lead resembling the false-positive profile scores below 40 regardless of tier; do not inflate Diamond leads by tier alone — judge the person, not the label; recommendations must be actionable (change the basket, the pull geography, or the Define criteria), never generic.`;
+
 export const DEFAULT_PROMPTS: ChatPrompts = {
   define: DEFAULT_DEFINE_PROMPT,
   find: DEFAULT_FIND_PROMPT,
   letter: DEFAULT_LETTER_PROMPT,
+  audit: DEFAULT_AUDIT_PROMPT,
 };
 
 const LEGACY_FIND_WEIGH =
@@ -473,12 +482,16 @@ export function previewPromptSegments(
 }
 export function normalizePrompts(raw: unknown): ChatPrompts | null {
   if (!raw || typeof raw !== "object") return null;
-  const obj = raw as { define?: unknown; find?: unknown; letter?: unknown };
+  const obj = raw as { define?: unknown; find?: unknown; letter?: unknown; audit?: unknown };
   if (typeof obj.define !== "string" || typeof obj.find !== "string") return null;
   if (!obj.define.trim() || !obj.find.trim()) return null;
   const letter =
     typeof obj.letter === "string" && obj.letter.trim()
       ? obj.letter
       : DEFAULT_LETTER_PROMPT;
-  return { define: obj.define, find: obj.find, letter };
+  const audit =
+    typeof obj.audit === "string" && obj.audit.trim()
+      ? obj.audit
+      : DEFAULT_AUDIT_PROMPT;
+  return { define: obj.define, find: obj.find, letter, audit };
 }

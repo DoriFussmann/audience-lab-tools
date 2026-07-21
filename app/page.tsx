@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import Admin from "@/components/Admin";
+import AudienceAudit from "@/components/AudienceAudit";
 import AudienceDefine from "@/components/AudienceDefine";
 import AudienceFind from "@/components/AudienceFind";
 import AudienceFusion from "@/components/AudienceFusion";
@@ -30,6 +31,7 @@ import {
   emptyProjectFusion,
   markFusionNeedsReattach,
   normalizeProjectFusion,
+  type FuseResult,
 } from "@/lib/fusion";
 import { emptyProjectLetter, normalizeProjectLetter } from "@/lib/letter";
 import { normalizeSavedAudience } from "@/lib/match";
@@ -63,13 +65,14 @@ import type {
   ChatMessage,
   FieldMap,
   Project,
+  ProjectAudit,
   ProjectFusion,
   ProjectLetter,
   SavedAudience,
   TaxRow,
 } from "@/lib/types";
 
-type Tab = "dashboard" | "define" | "find" | "letter" | "fusion" | "admin";
+type Tab = "dashboard" | "define" | "find" | "letter" | "fusion" | "audit" | "admin";
 
 const NAV: [Tab, string][] = [
   ["dashboard", "Project Dashboard"],
@@ -77,6 +80,7 @@ const NAV: [Tab, string][] = [
   ["find", "Audience Find"],
   ["letter", "Audience Letter"],
   ["fusion", "Audience Fusion"],
+  ["audit", "Audience Audit"],
 ];
 
 function navButtonClass(active: boolean) {
@@ -112,6 +116,9 @@ export default function Page() {
   const [audience, setAudience] = useState<SavedAudience | null>(null);
   const [letter, setLetterState] = useState<ProjectLetter>(() => emptyProjectLetter());
   const [fusion, setFusionState] = useState<ProjectFusion>(() => emptyProjectFusion());
+
+  const [fuseResult, setFuseResult] = useState<FuseResult | null>(null);
+  const [auditState, setAuditState] = useState<ProjectAudit | null>(null);
 
   const [rows, setRows] = useState<TaxRow[]>([]);
   const [taxonomyName, setTaxonomyName] = useState("");
@@ -152,8 +159,28 @@ export default function Page() {
     });
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      // Only update user state on genuine identity transitions.
+      // TOKEN_REFRESHED and similar no-op events must NOT trigger a state
+      // change: doing so produces a new User object reference, which causes
+      // the [user] effect to re-run, resetting accountReady and reloading
+      // projects — wiping any in-progress unsaved work on tab refocus.
+      if (event === "SIGNED_OUT") {
+        setUser(null);
+        return;
+      }
+      if (event === "SIGNED_IN" || event === "INITIAL_SESSION") {
+        setUser((prev) => {
+          const nextId = session?.user?.id ?? null;
+          // Same identity — return the existing reference so React bails out
+          // without a re-render and the project-load effect never re-fires.
+          if ((prev?.id ?? null) === nextId) return prev;
+          return session?.user ?? null;
+        });
+      }
+      // TOKEN_REFRESHED, USER_UPDATED, PASSWORD_RECOVERY, MFA_CHALLENGE_VERIFIED:
+      // token rotated but same user — intentionally ignored to prevent spurious
+      // project reloads on tab focus.
     });
     return () => subscription.unsubscribe();
   }, []);
@@ -287,6 +314,7 @@ export default function Page() {
         find: { messages: findMessages, audience, taxonomyName },
         letter,
         fusion,
+        audit: auditState,
         name: current.name,
       };
       setProjects((prev) => prev.map((p) => (p.id === currentId ? nextProject : p)));
@@ -301,7 +329,7 @@ export default function Page() {
       }
     }, 400);
     return () => clearTimeout(t);
-  }, [currentId, fields, defineMessages, findMessages, audience, taxonomyName, letter, fusion, user]);
+  }, [currentId, fields, defineMessages, findMessages, audience, taxonomyName, letter, fusion, auditState, user]);
 
   // Refresh taxonomy when entering Find
   useEffect(() => {
@@ -409,6 +437,7 @@ export default function Page() {
         find: { messages: [], audience: null, taxonomyName },
         letter: emptyProjectLetter(),
         fusion: emptyProjectFusion(),
+        audit: null,
       },
       user.id,
       user.email || profile?.email || ""
@@ -428,6 +457,8 @@ export default function Page() {
     setAudience(null);
     setLetterState(emptyProjectLetter());
     setFusionState(emptyProjectFusion());
+    setAuditState(null);
+    setFuseResult(null);
     setCurrentId(project.id);
     setMenuOpen(false);
     setTab("define");
@@ -441,6 +472,8 @@ export default function Page() {
     setAudience(normalizeSavedAudience(p.find.audience));
     setLetterState(normalizeProjectLetter(p.letter));
     setFusionState(markFusionNeedsReattach(normalizeProjectFusion(p.fusion)));
+    setAuditState(p.audit ?? null);
+    setFuseResult(null);
     setCurrentId(p.id);
     setMenuOpen(false);
     setTab("dashboard");
@@ -486,6 +519,7 @@ export default function Page() {
     } else if (stage === "fusion") {
       setFusionState(emptyProjectFusion());
       setFusionResetKey((k) => k + 1);
+      setFuseResult(null);
     }
   }
 
@@ -647,6 +681,7 @@ export default function Page() {
               audience={audience}
               letter={letter}
               fusion={fusion}
+              audit={auditState}
               schema={schema}
               onOpen={setTab}
             />
@@ -703,6 +738,18 @@ export default function Page() {
               resetBlockedMessage={resetBlockedBy("fusion", stageState)}
               onResetStage={() => resetStage("fusion")}
               resetKey={fusionResetKey}
+              onFused={setFuseResult}
+            />
+          )}
+          {tab === "audit" && (
+            <AudienceAudit
+              fuseResult={fuseResult}
+              audience={audience}
+              fields={fields}
+              schema={schema}
+              prompt={prompts.audit || ""}
+              persistedAudit={auditState}
+              onAuditResult={setAuditState}
             />
           )}
           {tab === "admin" && isSuperAdmin && (

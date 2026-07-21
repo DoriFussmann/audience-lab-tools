@@ -204,6 +204,7 @@ export default function AudienceFusion({
   resetBlockedMessage,
   onResetStage,
   resetKey,
+  onFused,
 }: {
   projectName: string;
   audience: SavedAudience | null;
@@ -214,6 +215,8 @@ export default function AudienceFusion({
   onResetStage?: () => void;
   /** Bump to clear in-memory lead CSVs after a stage reset. */
   resetKey?: number;
+  /** Called with the full FuseResult after a successful fuse. */
+  onFused?: (result: FuseResult) => void;
 }) {
   const [files, setFiles] = useState<AttachedFile[]>([]);
   const [dragging, setDragging] = useState(false);
@@ -406,6 +409,7 @@ export default function AudienceFusion({
     const audienceFiles = [...byAudience.values()];
     const fused = fuseLeads(basket, audienceFiles, audience.tierPlan);
     setResult(fused);
+    onFused?.(fused);
     setGeoFilter(null);
     setGeoMismatch(attachedAudiencesHaveDisjointGeography(audienceFiles));
     setOpenTiers({ silver: false, gold: false, diamond: false });

@@ -37,6 +37,7 @@ export function rowToProject(row: ProjectRow, userId: string): ProjectListItem {
     find: data.find,
     letter: data.letter,
     fusion: data.fusion,
+    audit: data.audit ?? null,
     ownerId: row.owner_id,
     ownerEmail: ownerEmailFrom(row),
     isOwner: row.owner_id === userId,
@@ -53,6 +54,7 @@ export function projectPayload(project: Project): Project {
     find: project.find,
     letter: project.letter,
     fusion: project.fusion,
+    audit: project.audit ?? null,
   };
 }
 

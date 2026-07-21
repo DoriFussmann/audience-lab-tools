@@ -10,6 +10,7 @@ import {
   type FieldSchema,
 } from "@/lib/fields";
 import {
+  DEFAULT_AUDIT_PROMPT,
   DEFAULT_PROMPTS,
   availableTokens,
   syncPromptsToSchema,
@@ -25,7 +26,12 @@ function cloneSchema(schema: FieldSchema): FieldSchema {
 }
 
 function clonePrompts(prompts: ChatPrompts): ChatPrompts {
-  return { define: prompts.define, find: prompts.find, letter: prompts.letter };
+  return {
+    define: prompts.define,
+    find: prompts.find,
+    letter: prompts.letter,
+    audit: prompts.audit ?? DEFAULT_AUDIT_PROMPT,
+  };
 }
 
 export default function Admin({
@@ -135,7 +141,8 @@ export default function Admin({
     if (
       !draftPrompts.define.trim() ||
       !draftPrompts.find.trim() ||
-      !draftPrompts.letter.trim()
+      !draftPrompts.letter.trim() ||
+      !draftPrompts.audit?.trim()
     ) {
       return;
     }
@@ -180,7 +187,8 @@ export default function Admin({
                 !draftSchema.fields.length ||
                 !draftPrompts.define.trim() ||
                 !draftPrompts.find.trim() ||
-                !draftPrompts.letter.trim()
+                !draftPrompts.letter.trim() ||
+                !draftPrompts.audit?.trim()
               }
               className="rounded-lg border border-line px-3 py-1.5 text-muted hover:text-ink disabled:opacity-40"
             >
@@ -368,6 +376,15 @@ export default function Admin({
             value={draftPrompts.letter}
             onChange={(letter) => touchPrompts({ ...draftPrompts, letter })}
             tokens={letterTokens}
+            schema={draftSchema}
+            fields={fields}
+          />
+          <PromptEditor
+            label="Audience Audit prompt"
+            description="System prompt for the audit LLM call. Receives the definition, basket, tier rules, and pseudonymized lead sample."
+            value={draftPrompts.audit ?? DEFAULT_AUDIT_PROMPT}
+            onChange={(audit) => touchPrompts({ ...draftPrompts, audit })}
+            tokens={[]}
             schema={draftSchema}
             fields={fields}
           />
