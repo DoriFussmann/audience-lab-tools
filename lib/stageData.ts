@@ -109,8 +109,9 @@ export function resetBlockedBy(
 export function emptyDefine(schema: FieldSchema): {
   fields: FieldMap;
   messages: ChatMessage[];
+  report: null;
 } {
-  return { fields: emptyFields(schema), messages: [] };
+  return { fields: emptyFields(schema), messages: [], report: null };
 }
 
 export function emptyFind(taxonomyName: string): {

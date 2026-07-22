@@ -288,3 +288,88 @@ create policy "taxonomy_delete_super_admin"
   on storage.objects for delete
   to authenticated
   using (bucket_id = 'taxonomy' and public.is_super_admin());
+
+-- ---------------------------------------------------------------------------
+-- Storage bucket: project-reports (private)
+-- Path layout: {projectId}/define-summary.pdf
+-- Access: project owner or shared collaborator.
+-- ---------------------------------------------------------------------------
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('project-reports', 'project-reports', false, 10485760)
+on conflict (id) do update set public = false, file_size_limit = 10485760;
+
+create or replace function public.storage_project_id(object_name text)
+returns uuid
+language plpgsql
+stable
+as $$
+declare
+  folder text;
+begin
+  folder := (storage.foldername(object_name))[1];
+  if folder is null or folder !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
+    return null;
+  end if;
+  return folder::uuid;
+end;
+$$;
+
+drop policy if exists "project_reports_select" on storage.objects;
+create policy "project_reports_select"
+  on storage.objects for select
+  to authenticated
+  using (
+    bucket_id = 'project-reports'
+    and public.storage_project_id(name) is not null
+    and (
+      public.is_project_owner(public.storage_project_id(name))
+      or public.is_shared_with(public.storage_project_id(name))
+    )
+  );
+
+drop policy if exists "project_reports_insert" on storage.objects;
+create policy "project_reports_insert"
+  on storage.objects for insert
+  to authenticated
+  with check (
+    bucket_id = 'project-reports'
+    and public.storage_project_id(name) is not null
+    and (
+      public.is_project_owner(public.storage_project_id(name))
+      or public.is_shared_with(public.storage_project_id(name))
+    )
+  );
+
+drop policy if exists "project_reports_update" on storage.objects;
+create policy "project_reports_update"
+  on storage.objects for update
+  to authenticated
+  using (
+    bucket_id = 'project-reports'
+    and public.storage_project_id(name) is not null
+    and (
+      public.is_project_owner(public.storage_project_id(name))
+      or public.is_shared_with(public.storage_project_id(name))
+    )
+  )
+  with check (
+    bucket_id = 'project-reports'
+    and public.storage_project_id(name) is not null
+    and (
+      public.is_project_owner(public.storage_project_id(name))
+      or public.is_shared_with(public.storage_project_id(name))
+    )
+  );
+
+drop policy if exists "project_reports_delete" on storage.objects;
+create policy "project_reports_delete"
+  on storage.objects for delete
+  to authenticated
+  using (
+    bucket_id = 'project-reports'
+    and public.storage_project_id(name) is not null
+    and (
+      public.is_project_owner(public.storage_project_id(name))
+      or public.is_shared_with(public.storage_project_id(name))
+    )
+  );

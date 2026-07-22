@@ -169,6 +169,14 @@ export type {
 
 import type { FindSource, InstantlyFindState } from "./instantly";
 
+/** Saved Audience Define PDF report metadata (file lives in Supabase Storage). */
+export type DefineReportMeta = {
+  path: string;
+  fileName: string;
+  savedAt: number;
+  clientName: string;
+};
+
 export type Project = {
   id: string;
   name: string;
@@ -177,6 +185,8 @@ export type Project = {
   define: {
     fields: FieldMap;
     messages: ChatMessage[];
+    /** Latest saved Definition Summary PDF, if any. */
+    report?: DefineReportMeta | null;
   };
   find: {
     messages: ChatMessage[];

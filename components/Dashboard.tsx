@@ -2,10 +2,18 @@
 
 import { useState } from "react";
 import CopyBox from "./CopyBox";
+import { getDefineReportSignedUrl } from "@/lib/defineReport";
 import { allDone, categoryDone, categoryFields, type FieldSchema } from "@/lib/fields";
 import { materialsLinksList } from "@/lib/letter";
 import { buildProjectSummary } from "@/lib/summary";
-import type { FieldMap, ProjectAudit, ProjectFusion, ProjectLetter, SavedAudience } from "@/lib/types";
+import type {
+  DefineReportMeta,
+  FieldMap,
+  ProjectAudit,
+  ProjectFusion,
+  ProjectLetter,
+  SavedAudience,
+} from "@/lib/types";
 
 function Chevron({ open }: { open: boolean }) {
   return (
@@ -144,8 +152,10 @@ function DefinePreview({ fields, schema }: { fields: FieldMap; schema: FieldSche
 }
 
 export default function Dashboard({
+  projectId,
   projectName,
   fields,
+  defineReport,
   audience,
   letter,
   fusion,
@@ -153,8 +163,10 @@ export default function Dashboard({
   schema,
   onOpen,
 }: {
+  projectId: string;
   projectName: string;
   fields: FieldMap;
+  defineReport: DefineReportMeta | null;
   audience: SavedAudience | null;
   letter: ProjectLetter;
   fusion: ProjectFusion;
@@ -164,6 +176,7 @@ export default function Dashboard({
 }) {
   const [projectSummary, setProjectSummary] = useState("");
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
+  const [reportBusy, setReportBusy] = useState(false);
 
   const confirmed = schema.fields.filter((f) => fields[f.key]?.status === "confirmed").length;
   const skipped = schema.fields.filter((f) => fields[f.key]?.status === "skipped").length;
@@ -202,7 +215,21 @@ export default function Dashboard({
   const defineMeta =
     confirmed + skipped === 0
       ? `${schema.fields.length} data points`
-      : `${confirmed} confirmed · ${skipped} skipped · ${outstanding} left · ${categoriesDone}/${schema.categories.length} categories`;
+      : `${confirmed} confirmed · ${skipped} skipped · ${outstanding} left · ${categoriesDone}/${schema.categories.length} categories` +
+        (defineReport ? " · report saved" : "");
+
+  async function openDefineReport() {
+    if (!defineReport || reportBusy) return;
+    setReportBusy(true);
+    try {
+      const url = await getDefineReportSignedUrl(projectId, defineReport.path);
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch {
+      // Quiet failure — user can regenerate from Define Summary.
+    } finally {
+      setReportBusy(false);
+    }
+  }
 
   const findMeta = findDone
     ? `${basketCount} in basket${plan ? ` · ${plan.n} tier audiences` : ""}`
@@ -243,6 +270,25 @@ export default function Dashboard({
           <div className="scroll-thin max-h-72 overflow-y-auto">
             <DefinePreview fields={fields} schema={schema} />
           </div>
+          {defineReport && (
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-line px-3 py-2">
+              <div className="min-w-0">
+                <div className="text-ink">Definition Summary PDF</div>
+                <div className="truncate text-muted">
+                  {defineReport.clientName} ·{" "}
+                  {new Date(defineReport.savedAt).toLocaleDateString()}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => void openDefineReport()}
+                disabled={reportBusy}
+                className="shrink-0 rounded-lg border border-line px-3 py-1.5 text-muted hover:text-ink disabled:opacity-50"
+              >
+                {reportBusy ? "Opening…" : "Open PDF"}
+              </button>
+            </div>
+          )}
           <div>
             <button
               onClick={() => onOpen("define")}

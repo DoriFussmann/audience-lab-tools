@@ -4,11 +4,21 @@ import { useEffect, useRef, useState } from "react";
 import Chat from "./Chat";
 import CopyBox from "./CopyBox";
 import DataPanel from "./DataPanel";
+import DefineReportPreview from "./DefineReportPreview";
 import Proposals from "./Proposals";
 import StageReset from "./StageReset";
+import {
+  buildDefineReportData,
+  buildDefineReportPdf,
+  buildReportMeta,
+  defineReportFilename,
+  downloadPdfBlob,
+  getDefineReportSignedUrl,
+  uploadDefineReport,
+} from "@/lib/defineReport";
 import { prepareDocument, type PreparedDocument } from "@/lib/document";
 import { allDone, buildSummary, fieldByKey, type FieldSchema } from "@/lib/fields";
-import type { ChatMessage, FieldMap, Proposal } from "@/lib/types";
+import type { ChatMessage, DefineReportMeta, FieldMap, Proposal } from "@/lib/types";
 
 function actionableProposals(proposals: Proposal[], snapshot: FieldMap) {
   return proposals.filter((p) => {
@@ -22,21 +32,29 @@ function actionableProposals(proposals: Proposal[], snapshot: FieldMap) {
 }
 
 export default function AudienceDefine({
+  projectId,
+  projectName,
   fields,
   setFields,
   messages,
   setMessages,
   schema,
   prompt,
+  report,
+  onReportSaved,
   resetBlockedMessage,
   onResetStage,
 }: {
+  projectId: string;
+  projectName: string;
   fields: FieldMap;
   setFields: (updater: (prev: FieldMap) => FieldMap) => void;
   messages: ChatMessage[];
   setMessages: (updater: (prev: ChatMessage[]) => ChatMessage[]) => void;
   schema: FieldSchema;
   prompt: string;
+  report: DefineReportMeta | null;
+  onReportSaved: (report: DefineReportMeta) => void;
   resetBlockedMessage?: string | null;
   onResetStage?: () => void;
 }) {
@@ -44,20 +62,35 @@ export default function AudienceDefine({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [summaryOpen, setSummaryOpen] = useState(false);
+  const [reportPreview, setReportPreview] = useState(false);
+  const [reportBusy, setReportBusy] = useState(false);
+  const [reportError, setReportError] = useState("");
   const settlements = useRef<string[]>([]);
   const fieldsRef = useRef(fields);
   fieldsRef.current = fields;
   const done = allDone(fields, schema);
   const summary = done ? buildSummary(fields, schema) : "";
+  const reportData = done ? buildDefineReportData(projectName, fields, schema) : null;
 
   useEffect(() => {
     if (!summaryOpen) return;
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setSummaryOpen(false);
+      if (e.key === "Escape") {
+        if (reportPreview) setReportPreview(false);
+        else setSummaryOpen(false);
+      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  }, [summaryOpen, reportPreview]);
+
+  useEffect(() => {
+    if (!summaryOpen) {
+      setReportPreview(false);
+      setReportError("");
+    }
   }, [summaryOpen]);
+
   const byKey = fieldByKey(schema);
   const confirmedCount = schema.fields.filter(
     (f) => fields[f.key]?.status === "confirmed"
@@ -205,6 +238,39 @@ export default function AudienceDefine({
     advance([]);
   }
 
+  async function saveReportPdf() {
+    if (!reportData || reportBusy) return;
+    setReportBusy(true);
+    setReportError("");
+    try {
+      const now = new Date();
+      const blob = buildDefineReportPdf(reportData);
+      const fileName = defineReportFilename(projectName, now);
+      const path = await uploadDefineReport(projectId, blob);
+      const meta = buildReportMeta(path, fileName, reportData.clientName, now.getTime());
+      onReportSaved(meta);
+      downloadPdfBlob(blob, fileName);
+    } catch (e) {
+      setReportError(e instanceof Error ? e.message : "Could not save PDF");
+    } finally {
+      setReportBusy(false);
+    }
+  }
+
+  async function openSavedReport() {
+    if (!report || reportBusy) return;
+    setReportBusy(true);
+    setReportError("");
+    try {
+      const url = await getDefineReportSignedUrl(projectId, report.path);
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (e) {
+      setReportError(e instanceof Error ? e.message : "Could not open saved PDF");
+    } finally {
+      setReportBusy(false);
+    }
+  }
+
   const footer = (
     <>
       {error && <div className="text-accent">{error}</div>}
@@ -216,15 +282,32 @@ export default function AudienceDefine({
         onConfirmAll={onConfirmAll}
       />
       {done && (
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-line p-3">
-          <div>Audience Define complete. Chat below to revise any data point.</div>
-          <button
-            type="button"
-            onClick={() => setSummaryOpen(true)}
-            className="shrink-0 rounded-lg border border-line px-3 py-1.5 text-muted hover:text-ink"
-          >
-            Summary
-          </button>
+        <div className="flex flex-col gap-2 rounded-lg border border-line p-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>Audience Define complete. Chat below to revise any data point.</div>
+            <button
+              type="button"
+              onClick={() => setSummaryOpen(true)}
+              className="shrink-0 rounded-lg border border-line px-3 py-1.5 text-muted hover:text-ink"
+            >
+              Summary
+            </button>
+          </div>
+          {report && (
+            <div className="flex items-center justify-between gap-3 border-t border-line pt-2 text-muted">
+              <span>
+                Saved report · {new Date(report.savedAt).toLocaleDateString()}
+              </span>
+              <button
+                type="button"
+                onClick={() => void openSavedReport()}
+                disabled={reportBusy}
+                className="shrink-0 rounded-lg border border-line px-3 py-1.5 hover:text-ink disabled:opacity-50"
+              >
+                Open PDF
+              </button>
+            </div>
+          )}
         </div>
       )}
     </>
@@ -242,6 +325,7 @@ export default function AudienceDefine({
                 {done
                   ? " · complete — chat to revise"
                   : " · type or upload a document"}
+                {report ? " · report saved" : ""}
               </div>
             </div>
             {onResetStage && (
@@ -274,22 +358,79 @@ export default function AudienceDefine({
             role="dialog"
             aria-modal="true"
             aria-labelledby="define-summary-title"
-            className="flex w-full max-w-2xl flex-col gap-4 rounded-xl border border-line bg-white p-5 shadow-sm"
+            className={
+              "flex w-full flex-col gap-4 rounded-xl border border-line bg-white p-5 shadow-sm " +
+              (reportPreview ? "max-w-4xl" : "max-w-2xl")
+            }
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-3">
               <div id="define-summary-title" className="text-ink">
-                Definition Summary
+                {reportPreview ? "Report Preview" : "Definition Summary"}
               </div>
               <button
                 type="button"
-                onClick={() => setSummaryOpen(false)}
+                onClick={() => {
+                  if (reportPreview) setReportPreview(false);
+                  else setSummaryOpen(false);
+                }}
                 className="rounded-lg border border-line px-2.5 py-1 text-[13px] text-muted hover:text-ink"
               >
-                Close
+                {reportPreview ? "Back" : "Close"}
               </button>
             </div>
-            <CopyBox value={summary} height="h-[min(28rem,60vh)]" />
+
+            {reportPreview && reportData ? (
+              <>
+                <DefineReportPreview data={reportData} />
+                {reportError && <div className="text-accent">{reportError}</div>}
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {report && (
+                    <button
+                      type="button"
+                      onClick={() => void openSavedReport()}
+                      disabled={reportBusy}
+                      className="rounded-lg border border-line px-3 py-1.5 text-muted hover:text-ink disabled:opacity-50"
+                    >
+                      Open saved PDF
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void saveReportPdf()}
+                    disabled={reportBusy}
+                    className="rounded-lg border border-line px-3 py-1.5 text-ink hover:bg-soft disabled:opacity-50"
+                  >
+                    {reportBusy ? "Saving…" : report ? "Save to PDF again" : "Save to PDF"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <CopyBox value={summary} height="h-[min(28rem,60vh)]" />
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  {report ? (
+                    <button
+                      type="button"
+                      onClick={() => void openSavedReport()}
+                      disabled={reportBusy}
+                      className="rounded-lg border border-line px-3 py-1.5 text-muted hover:text-ink disabled:opacity-50"
+                    >
+                      Open saved PDF
+                    </button>
+                  ) : (
+                    <span />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setReportPreview(true)}
+                    className="rounded-lg border border-line px-3 py-1.5 text-ink hover:bg-soft"
+                  >
+                    Preview Report Summary
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

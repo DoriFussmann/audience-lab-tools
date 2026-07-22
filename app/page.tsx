@@ -55,6 +55,7 @@ import {
   syncPromptsToSchema,
   type ChatPrompts,
 } from "@/lib/prompts";
+import { removeDefineReport } from "@/lib/defineReport";
 import {
   emptyDefine,
   emptyFind,
@@ -77,6 +78,7 @@ import { createClient } from "@/lib/supabase/client";
 import { parseTaxonomy } from "@/lib/taxonomy";
 import type {
   ChatMessage,
+  DefineReportMeta,
   FieldMap,
   Project,
   ProjectAudit,
@@ -134,6 +136,7 @@ export default function Page() {
   const [prompts, setPrompts] = useState<ChatPrompts>(DEFAULT_PROMPTS);
   const [fields, setFieldsState] = useState<FieldMap>(() => emptyFields(DEFAULT_SCHEMA));
   const [defineMessages, setDefineMessagesState] = useState<ChatMessage[]>([]);
+  const [defineReport, setDefineReport] = useState<DefineReportMeta | null>(null);
   const [findMessages, setFindMessagesState] = useState<ChatMessage[]>([]);
   const [audience, setAudience] = useState<SavedAudience | null>(null);
   const [findSource, setFindSource] = useState<FindSource>("audienceLab");
@@ -318,6 +321,7 @@ export default function Page() {
           skipSave.current = true;
           setFieldsState(reconcileFields(reopen.define.fields, nextSchema));
           setDefineMessagesState(reopen.define.messages);
+          setDefineReport(reopen.define.report ?? null);
           setFindMessagesState(reopen.find.messages);
           setAudience(normalizeSavedAudience(reopen.find.audience));
           setFindSource(normalizeFindSource(reopen.find.source));
@@ -377,7 +381,7 @@ export default function Page() {
     const nextProject: ProjectListItem = {
       ...current,
       updatedAt: Date.now(),
-      define: { fields, messages: defineMessages },
+      define: { fields, messages: defineMessages, report: defineReport },
       find: {
         messages: findMessages,
         audience,
@@ -416,7 +420,7 @@ export default function Page() {
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [currentId, fields, defineMessages, findMessages, audience, taxonomyName, findSource, instantlyFind, letter, fusion, auditState, user]);
+  }, [currentId, fields, defineMessages, defineReport, findMessages, audience, taxonomyName, findSource, instantlyFind, letter, fusion, auditState, user]);
 
   // Flush pending save on tab close / refresh so fusion+audit aren't lost mid-debounce
   useEffect(() => {
@@ -563,6 +567,7 @@ export default function Page() {
     skipSave.current = true;
     setFieldsState(project.define.fields);
     setDefineMessagesState([]);
+    setDefineReport(null);
     setFindMessagesState([]);
     setAudience(null);
     setFindSource("audienceLab");
@@ -582,6 +587,7 @@ export default function Page() {
     skipSave.current = true;
     setFieldsState(reconcileFields(p.define.fields, schema));
     setDefineMessagesState(p.define.messages);
+    setDefineReport(p.define.report ?? null);
     setFindMessagesState(p.find.messages);
     setAudience(normalizeSavedAudience(p.find.audience));
     setFindSource(normalizeFindSource(p.find.source));
@@ -628,8 +634,15 @@ export default function Page() {
     skipSave.current = false;
     if (stage === "define") {
       const empty = emptyDefine(schema);
+      const priorReport = defineReport;
       setFieldsState(empty.fields);
       setDefineMessagesState(empty.messages);
+      setDefineReport(null);
+      if (priorReport?.path && currentId) {
+        void removeDefineReport(currentId, priorReport.path).catch(() => {
+          /* best-effort cleanup */
+        });
+      }
     } else if (stage === "find") {
       const empty = emptyFind(taxonomyName);
       setFindMessagesState(empty.messages);
@@ -800,8 +813,10 @@ export default function Page() {
         <div className="min-h-0 min-w-0 flex-1">
           {tab === "dashboard" && (
             <Dashboard
+              projectId={current.id}
               projectName={current.name}
               fields={fields}
+              defineReport={defineReport}
               audience={audience}
               letter={letter}
               fusion={fusion}
@@ -812,12 +827,16 @@ export default function Page() {
           )}
           {tab === "define" && (
             <AudienceDefine
+              projectId={current.id}
+              projectName={current.name}
               fields={fields}
               setFields={setFieldsState}
               messages={defineMessages}
               setMessages={setDefineMessagesState}
               schema={schema}
               prompt={prompts.define}
+              report={defineReport}
+              onReportSaved={setDefineReport}
               resetBlockedMessage={resetBlockedBy("define", stageState)}
               onResetStage={() => resetStage("define")}
             />
