@@ -77,7 +77,7 @@ export function buildAudienceSummary(audience: SavedAudience | null) {
 export function buildLetterCopyAll(result: LetterResult) {
   const blocks: string[] = [];
   for (const tier of result.tiers) {
-    blocks.push(tier.tier, `Style: ${result.style}`, "");
+    blocks.push(tier.tier, "");
     tier.emails.forEach((email, i) => {
       blocks.push(
         `Email ${i + 1} · Campaign Day ${email.day}`,
@@ -95,9 +95,12 @@ export function buildLetterCopyAll(result: LetterResult) {
 export function buildLetterSummary(letter: ProjectLetter | null) {
   if (!letter?.result) return "";
   const links = materialsLinksList(letter.materials.links);
+  const messages = letter.materials.keyMessages.map((m) => m.trim()).filter(Boolean);
   const lines = [
-    `Approach style: ${letter.result.style}`,
-    links.length ? `Materials links: ${links.join(", ")}` : "Materials links: (none)",
+    links.length ? `Links: ${links.join(", ")}` : "Links: (none)",
+    messages.length
+      ? `Key messages: ${messages.join(" | ")}`
+      : "Key messages: (none)",
     "",
     buildLetterCopyAll(letter.result),
   ];
@@ -156,15 +159,18 @@ export function buildAudienceKit(
   schema?: FieldSchema
 ) {
   const links = materialsLinksList(letter.materials.links);
-  const materialsLine = links.length
-    ? `Materials: ${links.join(", ")}`
-    : "Materials: (none)";
+  const messages = letter.materials.keyMessages.map((m) => m.trim()).filter(Boolean);
+  const materialsLine = [
+    links.length ? `Links: ${links.join(", ")}` : "Links: (none)",
+    messages.length
+      ? `Key messages: ${messages.join(" | ")}`
+      : "Key messages: (none)",
+  ].join(" · ");
 
   const parts = [
     `# ${name} — Audience Kit`,
     "",
     `Generated: ${new Date().toLocaleString()}`,
-    letter.result ? `Approach style: ${letter.result.style}` : "",
     materialsLine,
     "",
     "## Audience Define",
@@ -183,7 +189,6 @@ export function buildAudienceKit(
     parts.push("No letter sequences generated.");
   } else {
     parts.push(
-      `Style: ${letter.result.style}`,
       "Schedule: Email 1 → Campaign Day 1 · Email 2 → Campaign Day 5 · Email 3 → Campaign Day 10 (Mon–Fri)",
       "",
       buildLetterCopyAll(letter.result)

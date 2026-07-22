@@ -9,6 +9,7 @@ import AudienceFind from "@/components/AudienceFind";
 import AudienceFusion from "@/components/AudienceFusion";
 import AudienceLetter from "@/components/AudienceLetter";
 import Dashboard from "@/components/Dashboard";
+import InstantlyFind from "@/components/InstantlyFind";
 import LoginGate from "@/components/LoginGate";
 import ProjectGate from "@/components/ProjectGate";
 import SharePanel from "@/components/SharePanel";
@@ -33,6 +34,13 @@ import {
   normalizeProjectFusion,
   type FuseResult,
 } from "@/lib/fusion";
+import {
+  emptyInstantlyFind,
+  normalizeFindSource,
+  normalizeInstantlyFind,
+  type FindSource,
+  type InstantlyFindState,
+} from "@/lib/instantly";
 import { emptyProjectLetter, normalizeProjectLetter } from "@/lib/letter";
 import { normalizeSavedAudience } from "@/lib/match";
 import {
@@ -42,6 +50,7 @@ import {
   type ProjectListItem,
 } from "@/lib/projects";
 import {
+  DEFAULT_INSTANTLY_FIND_PROMPT,
   DEFAULT_PROMPTS,
   syncPromptsToSchema,
   type ChatPrompts,
@@ -77,6 +86,14 @@ import type {
   TaxRow,
 } from "@/lib/types";
 
+function findSourceToggleClass(active: boolean) {
+  return (
+    "rounded-lg border px-3 py-1.5 " +
+    (active
+      ? "border-ink text-ink"
+      : "border-line text-muted hover:text-ink")
+  );
+}
 type Tab = "dashboard" | "define" | "find" | "letter" | "fusion" | "audit" | "admin";
 
 const NAV: [Tab, string][] = [
@@ -119,6 +136,10 @@ export default function Page() {
   const [defineMessages, setDefineMessagesState] = useState<ChatMessage[]>([]);
   const [findMessages, setFindMessagesState] = useState<ChatMessage[]>([]);
   const [audience, setAudience] = useState<SavedAudience | null>(null);
+  const [findSource, setFindSource] = useState<FindSource>("audienceLab");
+  const [instantlyFind, setInstantlyFind] = useState<InstantlyFindState>(() =>
+    emptyInstantlyFind()
+  );
   const [letter, setLetterState] = useState<ProjectLetter>(() => emptyProjectLetter());
   const [fusion, setFusionState] = useState<ProjectFusion>(() => emptyProjectFusion());
 
@@ -150,6 +171,7 @@ export default function Page() {
     audience,
     letter,
     fusion,
+    instantly: instantlyFind,
   };
 
   function flash(msg: string) {
@@ -232,6 +254,8 @@ export default function Page() {
               messages: p.find?.messages || [],
               audience: normalizeSavedAudience(p.find?.audience),
               taxonomyName: p.find?.taxonomyName || "",
+              source: normalizeFindSource(p.find?.source),
+              instantly: normalizeInstantlyFind(p.find?.instantly),
             },
             letter: normalizeProjectLetter(p.letter),
             fusion: markFusionNeedsReattach(merged.fusion),
@@ -264,6 +288,8 @@ export default function Page() {
                       messages: p.find?.messages || [],
                       audience: normalizeSavedAudience(p.find?.audience),
                       taxonomyName: p.find?.taxonomyName || "",
+                      source: normalizeFindSource(p.find?.source),
+                      instantly: normalizeInstantlyFind(p.find?.instantly),
                     },
                     letter: normalizeProjectLetter(p.letter),
                     fusion: markFusionNeedsReattach(normalizeProjectFusion(p.fusion)),
@@ -294,6 +320,8 @@ export default function Page() {
           setDefineMessagesState(reopen.define.messages);
           setFindMessagesState(reopen.find.messages);
           setAudience(normalizeSavedAudience(reopen.find.audience));
+          setFindSource(normalizeFindSource(reopen.find.source));
+          setInstantlyFind(normalizeInstantlyFind(reopen.find.instantly));
           setLetterState(normalizeProjectLetter(reopen.letter));
           setFusionState(markFusionNeedsReattach(normalizeProjectFusion(reopen.fusion)));
           setAuditState(reopen.audit ?? null);
@@ -350,7 +378,13 @@ export default function Page() {
       ...current,
       updatedAt: Date.now(),
       define: { fields, messages: defineMessages },
-      find: { messages: findMessages, audience, taxonomyName },
+      find: {
+        messages: findMessages,
+        audience,
+        taxonomyName,
+        source: findSource,
+        instantly: instantlyFind,
+      },
       letter,
       fusion,
       audit: auditState,
@@ -382,7 +416,7 @@ export default function Page() {
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [currentId, fields, defineMessages, findMessages, audience, taxonomyName, letter, fusion, auditState, user]);
+  }, [currentId, fields, defineMessages, findMessages, audience, taxonomyName, findSource, instantlyFind, letter, fusion, auditState, user]);
 
   // Flush pending save on tab close / refresh so fusion+audit aren't lost mid-debounce
   useEffect(() => {
@@ -504,7 +538,13 @@ export default function Page() {
         createdAt: Date.now(),
         updatedAt: Date.now(),
         define: { fields: emptyFields(schema), messages: [] },
-        find: { messages: [], audience: null, taxonomyName },
+        find: {
+          messages: [],
+          audience: null,
+          taxonomyName,
+          source: "audienceLab",
+          instantly: emptyInstantlyFind(),
+        },
         letter: emptyProjectLetter(),
         fusion: emptyProjectFusion(),
         audit: null,
@@ -525,6 +565,8 @@ export default function Page() {
     setDefineMessagesState([]);
     setFindMessagesState([]);
     setAudience(null);
+    setFindSource("audienceLab");
+    setInstantlyFind(emptyInstantlyFind());
     setLetterState(emptyProjectLetter());
     setFusionState(emptyProjectFusion());
     setAuditState(null);
@@ -542,6 +584,8 @@ export default function Page() {
     setDefineMessagesState(p.define.messages);
     setFindMessagesState(p.find.messages);
     setAudience(normalizeSavedAudience(p.find.audience));
+    setFindSource(normalizeFindSource(p.find.source));
+    setInstantlyFind(normalizeInstantlyFind(p.find.instantly));
     setLetterState(normalizeProjectLetter(p.letter));
     setFusionState(markFusionNeedsReattach(merged.fusion));
     setAuditState(merged.audit);
@@ -590,6 +634,8 @@ export default function Page() {
       const empty = emptyFind(taxonomyName);
       setFindMessagesState(empty.messages);
       setAudience(empty.audience);
+      setFindSource(empty.source);
+      setInstantlyFind(empty.instantly);
     } else if (stage === "letter") {
       setLetterState(emptyProjectLetter());
     } else if (stage === "fusion") {
@@ -777,20 +823,52 @@ export default function Page() {
             />
           )}
           {tab === "find" && (
-            <AudienceFind
-              fields={fields}
-              applyProposal={applyProposal}
-              messages={findMessages}
-              setMessages={setFindMessagesState}
-              rows={rows}
-              taxonomyName={taxonomyName}
-              audience={audience}
-              setAudience={setAudience}
-              schema={schema}
-              prompt={prompts.find}
-              resetBlockedMessage={resetBlockedBy("find", stageState)}
-              onResetStage={() => resetStage("find")}
-            />
+            <div className="flex h-full min-h-0 flex-col">
+              <div className="flex items-center gap-2 border-b border-line px-6 py-2">
+                <button
+                  type="button"
+                  onClick={() => setFindSource("audienceLab")}
+                  className={findSourceToggleClass(findSource === "audienceLab")}
+                >
+                  Audience Lab
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFindSource("instantly")}
+                  className={findSourceToggleClass(findSource === "instantly")}
+                >
+                  Instantly
+                </button>
+              </div>
+              <div className="min-h-0 flex-1">
+                {findSource === "instantly" ? (
+                  <InstantlyFind
+                    fields={fields}
+                    schema={schema}
+                    prompt={prompts.instantlyFind || DEFAULT_INSTANTLY_FIND_PROMPT}
+                    instantly={instantlyFind}
+                    setInstantly={setInstantlyFind}
+                    resetBlockedMessage={resetBlockedBy("find", stageState)}
+                    onResetStage={() => resetStage("find")}
+                  />
+                ) : (
+                  <AudienceFind
+                    fields={fields}
+                    applyProposal={applyProposal}
+                    messages={findMessages}
+                    setMessages={setFindMessagesState}
+                    rows={rows}
+                    taxonomyName={taxonomyName}
+                    audience={audience}
+                    setAudience={setAudience}
+                    schema={schema}
+                    prompt={prompts.find}
+                    resetBlockedMessage={resetBlockedBy("find", stageState)}
+                    onResetStage={() => resetStage("find")}
+                  />
+                )}
+              </div>
+            </div>
           )}
           {tab === "letter" && (
             <AudienceLetter

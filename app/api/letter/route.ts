@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { askJson } from "@/lib/anthropic";
 import { DEFAULT_SCHEMA, normalizeSchema, type FieldSchema } from "@/lib/fields";
-import { normalizeLetterResult } from "@/lib/letter";
+import { normalizeLetterResult, normalizeMaterials } from "@/lib/letter";
 import {
   DEFAULT_LETTER_PROMPT,
   buildLetterUserPayload,
@@ -9,7 +9,6 @@ import {
 } from "@/lib/prompts";
 import { requireUser } from "@/lib/supabase/server";
 import type {
-  ApproachStyle,
   FieldMap,
   LetterMaterials,
   LetterResult,
@@ -23,7 +22,6 @@ type Body = {
   fields: FieldMap;
   audience: SavedAudience;
   materials?: LetterMaterials;
-  style?: ApproachStyle;
   schema?: FieldSchema;
   prompt?: string;
   /** One-shot revision notes for this generate call only. */
@@ -50,17 +48,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const style: ApproachStyle =
-      body.style === "Consultative" ||
-      body.style === "Challenger" ||
-      body.style === "Warm"
-        ? body.style
-        : "Direct";
-
-    const materials: LetterMaterials = {
-      links: typeof body.materials?.links === "string" ? body.materials.links : "",
-      snippets: typeof body.materials?.snippets === "string" ? body.materials.snippets : "",
-    };
+    const materials = normalizeMaterials(body.materials);
 
     const template =
       typeof body.prompt === "string" && body.prompt.trim()
@@ -72,7 +60,6 @@ export async function POST(req: Request) {
       fields,
       audience,
       materials,
-      approachStyle: style,
     });
 
     const userContent = buildLetterUserPayload({
@@ -80,7 +67,6 @@ export async function POST(req: Request) {
       schema,
       audience,
       materials,
-      style,
       feedback:
         typeof body.feedback === "string" && body.feedback.trim()
           ? body.feedback.trim()
@@ -126,7 +112,7 @@ export async function POST(req: Request) {
       { maxTokens: 8000 }
     );
 
-    const result = normalizeLetterResult(data, style);
+    const result = normalizeLetterResult(data);
     if (!result) {
       return NextResponse.json(
         { error: "Letter generation returned incomplete sequences." },

@@ -1,5 +1,10 @@
 import { emptyFields, type FieldSchema } from "./fields";
 import { emptyProjectFusion } from "./fusion";
+import {
+  emptyInstantlyFind,
+  type FindSource,
+  type InstantlyFindState,
+} from "./instantly";
 import { emptyProjectLetter } from "./letter";
 import type {
   ChatMessage,
@@ -18,17 +23,25 @@ export function defineHasData(fields: FieldMap, messages: ChatMessage[]): boolea
 
 export function findHasData(
   messages: ChatMessage[],
-  audience: SavedAudience | null
+  audience: SavedAudience | null,
+  instantly?: InstantlyFindState | null
 ): boolean {
-  return messages.length > 0 || audience != null;
+  if (messages.length > 0 || audience != null) return true;
+  if (!instantly) return false;
+  return (
+    instantly.filters != null ||
+    instantly.count != null ||
+    (instantly.preview != null && instantly.preview.length > 0)
+  );
 }
 
-/** Style alone does not count — only result or materials. */
+/** Result or inputs count — empty shell does not. */
 export function letterHasData(letter: ProjectLetter): boolean {
   if (letter.result != null) return true;
-  const links = letter.materials?.links?.trim() || "";
-  const snippets = letter.materials?.snippets?.trim() || "";
-  return links.length > 0 || snippets.length > 0;
+  const links = letter.materials?.links?.some((l) => l.url.trim()) || false;
+  const messages =
+    letter.materials?.keyMessages?.some((m) => m.trim()) || false;
+  return links || messages;
 }
 
 export function fusionHasData(fusion: ProjectFusion): boolean {
@@ -44,13 +57,14 @@ export function stageHasData(
     audience: SavedAudience | null;
     letter: ProjectLetter;
     fusion: ProjectFusion;
+    instantly?: InstantlyFindState | null;
   }
 ): boolean {
   switch (stage) {
     case "define":
       return defineHasData(state.fields, state.defineMessages);
     case "find":
-      return findHasData(state.findMessages, state.audience);
+      return findHasData(state.findMessages, state.audience, state.instantly);
     case "letter":
       return letterHasData(state.letter);
     case "fusion":
@@ -71,10 +85,11 @@ export function resetBlockedBy(
     audience: SavedAudience | null;
     letter: ProjectLetter;
     fusion: ProjectFusion;
+    instantly?: InstantlyFindState | null;
   }
 ): string | null {
   if (stage === "define") {
-    if (findHasData(state.findMessages, state.audience)) {
+    if (findHasData(state.findMessages, state.audience, state.instantly)) {
       return "Reset Audience Find first.";
     }
     return null;
@@ -102,8 +117,16 @@ export function emptyFind(taxonomyName: string): {
   messages: ChatMessage[];
   audience: SavedAudience | null;
   taxonomyName: string;
+  source: FindSource;
+  instantly: InstantlyFindState;
 } {
-  return { messages: [], audience: null, taxonomyName };
+  return {
+    messages: [],
+    audience: null,
+    taxonomyName,
+    source: "audienceLab",
+    instantly: emptyInstantlyFind(),
+  };
 }
 
 export { emptyProjectLetter, emptyProjectFusion };

@@ -80,8 +80,6 @@ export type SavedAudience = {
   tierPlan: TierPlan;
 };
 
-export type ApproachStyle = "Direct" | "Consultative" | "Challenger" | "Warm";
-
 export type LetterEmail = {
   day: number;
   subject: string;
@@ -98,17 +96,20 @@ export type LetterTierSequence = {
 export type LetterResult = {
   tiers: LetterTierSequence[];
   note: string;
-  style: ApproachStyle;
+};
+
+export type LetterMaterialLink = {
+  url: string;
+  label: string;
 };
 
 export type LetterMaterials = {
-  links: string;
-  snippets: string;
+  links: LetterMaterialLink[];
+  keyMessages: string[];
 };
 
 export type ProjectLetter = {
   materials: LetterMaterials;
-  style: ApproachStyle;
   result: LetterResult | null;
 };
 
@@ -157,6 +158,17 @@ export type ProjectAudit = {
   runAt: number;
 };
 
+export type {
+  FindSource,
+  InstantlyFindState,
+  InstantlyIncludeExclude,
+  InstantlyKeywordFilter,
+  InstantlyPreviewLead,
+  InstantlySearchFilters,
+} from "./instantly";
+
+import type { FindSource, InstantlyFindState } from "./instantly";
+
 export type Project = {
   id: string;
   name: string;
@@ -170,6 +182,10 @@ export type Project = {
     messages: ChatMessage[];
     audience: SavedAudience | null;
     taxonomyName: string;
+    /** Which Find source panel is active. Defaults to Audience Lab. */
+    source?: FindSource;
+    /** Instantly SuperSearch panel state (filters, count, preview). */
+    instantly?: InstantlyFindState;
   };
   letter: ProjectLetter;
   fusion: ProjectFusion;

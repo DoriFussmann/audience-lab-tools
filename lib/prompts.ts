@@ -1,7 +1,7 @@
 import { buildSummary, type FieldSchema } from "./fields";
 import { AUDIENCE_ROLES, type RoleCandidates } from "./match";
+import { formatMaterialLink } from "./letter";
 import type {
-  ApproachStyle,
   AudienceRole,
   FieldMap,
   LetterMaterials,
@@ -24,6 +24,8 @@ export type ChatPrompts = {
   find: string;
   letter: string;
   audit?: string;
+  /** Maps Audience Define → Instantly SuperSearch search_filters JSON. */
+  instantlyFind?: string;
 };
 
 export const DEFINE_SYSTEM_TOKENS: PromptToken[] = [
@@ -42,6 +44,16 @@ export const FIND_SYSTEM_TOKENS: PromptToken[] = [
   { id: "valid_keys", label: "Valid field keys", token: "{{valid_keys}}", kind: "system" },
 ];
 
+export const INSTANTLY_FIND_SYSTEM_TOKENS: PromptToken[] = [
+  {
+    id: "definition_summary",
+    label: "Definition summary",
+    token: "{{definition_summary}}",
+    kind: "system",
+  },
+  { id: "valid_keys", label: "Valid field keys", token: "{{valid_keys}}", kind: "system" },
+];
+
 export const LETTER_SYSTEM_TOKENS: PromptToken[] = [
   {
     id: "definition_summary",
@@ -51,14 +63,13 @@ export const LETTER_SYSTEM_TOKENS: PromptToken[] = [
   },
   { id: "basket", label: "Confirmed basket", token: "{{basket}}", kind: "system" },
   { id: "tier_plan", label: "Tier plan", token: "{{tier_plan}}", kind: "system" },
-  { id: "materials_links", label: "Materials links", token: "{{materials_links}}", kind: "system" },
+  { id: "materials_links", label: "Input links", token: "{{materials_links}}", kind: "system" },
   {
-    id: "materials_snippets",
-    label: "Materials snippets",
-    token: "{{materials_snippets}}",
+    id: "key_messages",
+    label: "Key messages",
+    token: "{{key_messages}}",
     kind: "system",
   },
-  { id: "approach_style", label: "Approach style", token: "{{approach_style}}", kind: "system" },
 ];
 
 export const DEFAULT_DEFINE_PROMPT = `You are an intake assistant collecting target-market data for an audience definition.
@@ -103,7 +114,7 @@ Rules:
 
 Respond by calling the "respond" tool. "reply" is a short message to the user, "matches" holds the selected basket, and "proposals" holds any definition values from the user's latest message.`;
 
-export const DEFAULT_LETTER_PROMPT = `You write cold outreach email sequences based on buying-intent data. You are given: the sender's offer and letter data points, a basket of intent audiences (with the search-phrase keywords that define them), a three-tier plan (Silver: leads in any one audience; Gold: leads in 2-3 audiences; Diamond: leads in most audiences), optional materials (links and proof snippets), and an approach style.
+export const DEFAULT_LETTER_PROMPT = `You write cold outreach email sequences based on buying-intent data. You are given: the sender's offer and letter data points, a basket of intent audiences (with the search-phrase keywords that define them), a three-tier plan (Silver: leads in any one audience; Gold: leads in 2-3 audiences; Diamond: leads in most audiences), and optional inputs (labeled links and key messages the sender wants incorporated).
 Produce one sequence of exactly 3 emails for each tier: Silver, Gold, Diamond.
 Rules:
 - Specificity scales with tier. Silver: category-level relevance, assume one intent signal. Gold: problem-aware, reference the pain and the evaluation openly. Diamond: near-uncomfortably specific — write as if you know they are actively comparing options in this exact space right now, because they are.
@@ -111,10 +122,9 @@ Rules:
 - The three emails in a sequence are three different angles, never three reminders: Email 1 opens on the intent moment and the prospect's problem; Email 2 shifts angle and leads with the proof point; Email 3 is a short, direct breakup carrying the single ask plainly.
 - Every email: subject line under 6 words, lowercase unless a proper noun; body 50-120 words; ends with the single ask (Email 1-2 soft form, Email 3 direct form); no greetings fluff, no "I hope this finds you well", no exclamation marks, no spam-trigger phrasing.
 - Use merge tokens {{firstName}} and {{company}} where a name or company naturally belongs. Never invent specifics about the prospect beyond what the tier justifies.
-- If links are provided: place the most action-oriented link (booking/calendar if present) as the destination of the single ask; use at most one link per email; a case study or landing page link belongs in Email 2 with the proof point. Never invent URLs — if no links are provided, phrase the ask so it works without one (e.g. reply-based).
-- If snippets are provided: treat them as verified proof material — quote or reference them where the proof point lands, verbatim or lightly trimmed, never embellished. Do not use them in every email; proof concentrates in Email 2.
-- Apply the approach style to tone only, never to structure: Direct = plain and brief; Consultative = leads with a question about their situation; Challenger = leads with a counterintuitive claim about their category; Warm = conversational, lightly personal.
-- Voice: write like one busy person to another. Short sentences. No marketing language.
+- If links are provided: each link has a label describing what it is. Use the label to choose the right link for the right email (e.g. booking/calendar as the ask destination; case study or landing page in Email 2 with the proof point). Place the most action-oriented link as the destination of the single ask; use at most one link per email. Never invent URLs — if no links are provided, phrase the ask so it works without one (e.g. reply-based).
+- If key messages are provided: treat them as required talking points the sender wants included across the sequences. Incorporate each message naturally (paraphrase for fit; do not dump them as a list). Spread them across emails and tiers rather than cramming all into one email.
+- Voice: write like one busy person to another. Short sentences. No marketing language. Default tone is plain and direct.
 Respond only with JSON: { "tiers": [ { "tier": "Silver|Gold|Diamond", "emails": [ { "day": n, "subject": "...", "body": "..." } ] } ], "note": "one line: days are campaign days (Mon-Fri); stop the sequence for any prospect who replies" }`;
 
 export const DEFAULT_AUDIT_PROMPT = `You audit a sample of real leads against a target-audience definition. You receive: the audience definition (offer, journey search phrases, precision criteria including false-positive profiles, lead attributes, letter data), the basket of intent audiences with roles, the tier rules, and a sample of pseudonymized leads (Lead A, Lead B, ...) each with demographic/professional attributes and their matched audiences.
@@ -124,11 +134,56 @@ Respond only with JSON:
   "patterns": { "highFitSources": "which audiences the strong fits came from and why that makes sense", "lowFitSources": "which audiences the weak fits came from", "basketAdvice": "concrete recommendation about the basket, e.g. an audience to reconsider or a pull setting to change", "overall": "one-paragraph verdict on whether this fused list matches the defined audience" } }
 Rules: be blunt; a lead resembling the false-positive profile scores below 40 regardless of tier; do not inflate Diamond leads by tier alone — judge the person, not the label; recommendations must be actionable (change the basket, the pull geography, or the Define criteria), never generic.`;
 
+export const DEFAULT_INSTANTLY_FIND_PROMPT = `You translate a target-market definition into Instantly SuperSearch search_filters JSON. The definition describes a persona / ideal customer profile, not one named individual.
+
+TARGET MARKET DEFINITION:
+{{definition_summary}}
+
+Map the definition into Instantly SuperSearch filters. Output ONLY valid JSON matching this schema (all keys optional — omit keys you cannot confidently fill):
+{
+  "locations": { "include": string[], "exclude": string[] },
+  "department": string[],
+  "level": string[],
+  "employee_count": string[],
+  "revenue": string[],
+  "title": { "include": string[], "exclude": string[] },
+  "industry": { "include": string[], "exclude": string[] },
+  "keyword_filter": { "include": string[], "exclude": string[] },
+  "company_name": { "include": string[], "exclude": string[] },
+  "domains": string[],
+  "look_alike": string,
+  "funding_type": string[],
+  "news": string[],
+  "skip_owned_leads": boolean,
+  "show_one_lead_per_company": boolean
+}
+
+Enum constraints (use ONLY these values when setting the key):
+- department: Engineering, Finance & Administration, Human Resources, IT & IS, Marketing, Operations, Sales, Support, Other
+- level: C-Level, VP-Level, Director-Level, Manager-Level, Staff, Entry level, Mid-Senior level, Director, Associate, Owner
+- employee_count: "0 - 25", "25 - 100", "100 - 250", "250 - 1000", "1K - 10K", "10K - 50K", "50K - 100K", "> 100K"
+- revenue: "$0 - 1M", "$1 - 10M", "$10 - 50M", "$50 - 100M", "$100 - 250M", "$250 - 500M", "$500M - 1B", "> $1B"
+- industry include/exclude: Agriculture & Mining, Business Services, Computers & Electronics, Consumer Services, Education, Energy & Utilities, Financial Services, Government, Healthcare, Pharmaceuticals, & Biotech, Manufacturing, Media & Entertainment, Non-Profit, Other, Real Estate & Construction, Retail, Software & Internet, Telecommunications, Transportation & Storage, Travel, Recreation, and Leisure, Wholesale & Distribution
+- funding_type: angel, seed, pre_seed, series_a, series_b, series_c, series_d, series_e, series_f, series_g
+- news: launches, expands_offices_to, hires, partners_with, leaves, receives_financing, recognized_as, closes_offices_in, is_developing, has_issues_with
+
+Rules:
+- Prefer sparse, high-signal filters over exhaustive ones. Do not invent specifics the definition does not support.
+- locations: free-text place names (country / region / city) as strings in include or exclude.
+- title / keyword_filter / company_name: use include/exclude string arrays of short keywords.
+- industry: ONLY values from the industry enum above (e.g. "Software & Internet", not "SaaS").
+- look_alike: a single company domain (e.g. "acme.com") only when the definition clearly implies a lookalike company. Never use a company display name.
+- domains: company domains to include when explicitly known.
+- Default skip_owned_leads and show_one_lead_per_company to true unless the definition suggests otherwise.
+- Never wrap the JSON in markdown fences. Never add commentary. Output the JSON object only.
+Valid field keys for reference: {{valid_keys}}.`;
+
 export const DEFAULT_PROMPTS: ChatPrompts = {
   define: DEFAULT_DEFINE_PROMPT,
   find: DEFAULT_FIND_PROMPT,
   letter: DEFAULT_LETTER_PROMPT,
   audit: DEFAULT_AUDIT_PROMPT,
+  instantlyFind: DEFAULT_INSTANTLY_FIND_PROMPT,
 };
 
 const LEGACY_FIND_WEIGH =
@@ -143,6 +198,10 @@ export function migratePrompts(prompts: ChatPrompts): ChatPrompts {
     typeof prompts.audit === "string" && prompts.audit.trim()
       ? prompts.audit
       : DEFAULT_AUDIT_PROMPT;
+  const instantlyFind =
+    typeof prompts.instantlyFind === "string" && prompts.instantlyFind.trim()
+      ? prompts.instantlyFind
+      : DEFAULT_INSTANTLY_FIND_PROMPT;
   if (!define.includes("Never show the user field labels, keys, or category names")) {
     define = DEFAULT_DEFINE_PROMPT;
   }
@@ -187,10 +246,18 @@ export function migratePrompts(prompts: ChatPrompts): ChatPrompts {
   ) {
     find = DEFAULT_FIND_PROMPT;
   }
-  if (!letter.trim() || !letter.includes("Produce one sequence of exactly 3 emails")) {
+  // Drop style/snippets letter prompts; stock default now uses labeled links + key messages.
+  if (
+    !letter.trim() ||
+    !letter.includes("Produce one sequence of exactly 3 emails") ||
+    letter.includes("approach style") ||
+    letter.includes("proof snippets") ||
+    letter.includes("{{approach_style}}") ||
+    letter.includes("{{materials_snippets}}")
+  ) {
     letter = DEFAULT_LETTER_PROMPT;
   }
-  return { define, find, letter, audit };
+  return { define, find, letter, audit, instantlyFind };
 }
 
 const TOKEN_RE = /\{\{([a-zA-Z0-9_:]+)\}\}/g;
@@ -214,10 +281,13 @@ export function fieldTokens(schema: FieldSchema): PromptToken[] {
 }
 
 export function availableTokens(
-  kind: "define" | "find" | "letter",
+  kind: "define" | "find" | "letter" | "instantlyFind",
   schema: FieldSchema
 ): PromptToken[] {
   if (kind === "letter") return [...LETTER_SYSTEM_TOKENS, ...fieldTokens(schema)];
+  if (kind === "instantlyFind") {
+    return [...INSTANTLY_FIND_SYSTEM_TOKENS, ...fieldTokens(schema)];
+  }
   const system = kind === "define" ? DEFINE_SYSTEM_TOKENS : FIND_SYSTEM_TOKENS;
   return [...system, ...fieldTokens(schema)];
 }
@@ -275,6 +345,7 @@ export function syncPromptsToSchema(prompts: ChatPrompts, schema: FieldSchema): 
     find: prune(prompts.find),
     letter: prune(prompts.letter),
     audit: prune(prompts.audit ?? DEFAULT_AUDIT_PROMPT),
+    instantlyFind: prune(prompts.instantlyFind ?? DEFAULT_INSTANTLY_FIND_PROMPT),
   };
 }
 
@@ -297,13 +368,21 @@ export function formatTierPlanForLetter(audience: SavedAudience) {
 }
 
 export function formatMaterialsForLetter(materials: LetterMaterials) {
-  const links = materials.links.trim() || "(none)";
-  const snippets = materials.snippets.trim() || "(none)";
-  return `Links:\n${links}\n\nSnippets:\n${snippets}`;
+  const linkLines = materials.links
+    .map(formatMaterialLink)
+    .filter(Boolean);
+  const links = linkLines.length ? linkLines.join("\n") : "(none)";
+  const messages = materials.keyMessages
+    .map((m) => m.trim())
+    .filter(Boolean);
+  const keyMessages = messages.length
+    ? messages.map((m, i) => `${i + 1}. ${m}`).join("\n")
+    : "(none)";
+  return `Links:\n${links}\n\nKey messages:\n${keyMessages}`;
 }
 
 function formatDraftForRevision(result: LetterResult) {
-  const blocks: string[] = [`Style: ${result.style}`, ""];
+  const blocks: string[] = [];
   for (const tier of result.tiers) {
     blocks.push(tier.tier, "");
     tier.emails.forEach((email, i) => {
@@ -325,7 +404,6 @@ export function buildLetterUserPayload(opts: {
   schema: FieldSchema;
   audience: SavedAudience;
   materials: LetterMaterials;
-  style: ApproachStyle;
   feedback?: string;
   previous?: LetterResult | null;
 }) {
@@ -342,9 +420,6 @@ export function buildLetterUserPayload(opts: {
       ? "REWRITE all cold-email sequences from the following project data, applying the revision feedback below. Produce a full new set of Silver, Gold, and Diamond sequences — not partial edits."
       : "GENERATE cold-email sequences from the following project data.",
     "",
-    "APPROACH STYLE:",
-    opts.style,
-    "",
     "DEFINE (confirmed fields):",
     confirmed || "(none)",
     "",
@@ -354,7 +429,7 @@ export function buildLetterUserPayload(opts: {
     "TIER PLAN:",
     formatTierPlanForLetter(opts.audience),
     "",
-    "MATERIALS:",
+    "INPUTS & LINKS:",
     formatMaterialsForLetter(opts.materials),
   ];
 
@@ -423,7 +498,6 @@ export type RenderContext = {
   candidatesByRole?: RoleCandidates | Record<AudienceRole, TaxRow[]>;
   audience?: SavedAudience | null;
   materials?: LetterMaterials;
-  approachStyle?: ApproachStyle;
 };
 
 export function renderPrompt(template: string, ctx: RenderContext) {
@@ -436,6 +510,12 @@ export function renderPrompt(template: string, ctx: RenderContext) {
     .filter((f) => ctx.fields[f.key]?.status === "confirmed" && ctx.fields[f.key].value.trim())
     .map((f) => `${f.label}: ${ctx.fields[f.key].value.trim()}`)
     .join("\n");
+  const linkLines = (ctx.materials?.links || [])
+    .map(formatMaterialLink)
+    .filter(Boolean);
+  const keyMessages = (ctx.materials?.keyMessages || [])
+    .map((m) => m.trim())
+    .filter(Boolean);
   const values: Record<string, string> = {
     field_state: fieldStateText(ctx.fields, ctx.schema),
     valid_keys: keys,
@@ -443,9 +523,10 @@ export function renderPrompt(template: string, ctx: RenderContext) {
     candidates,
     basket: ctx.audience ? formatBasketForLetter(ctx.audience) : "",
     tier_plan: ctx.audience ? formatTierPlanForLetter(ctx.audience) : "",
-    materials_links: ctx.materials?.links.trim() || "(none)",
-    materials_snippets: ctx.materials?.snippets.trim() || "(none)",
-    approach_style: ctx.approachStyle || "Direct",
+    materials_links: linkLines.length ? linkLines.join("\n") : "(none)",
+    key_messages: keyMessages.length
+      ? keyMessages.map((m, i) => `${i + 1}. ${m}`).join("\n")
+      : "(none)",
     // Preserve merge tokens used in letter bodies / prompt instructions.
     firstName: "{{firstName}}",
     company: "{{company}}",
@@ -481,9 +562,8 @@ export function tokenHelpText(token: PromptToken): string {
   if (token.id === "candidates") return "Role-grouped candidate audiences";
   if (token.id === "basket") return "Confirmed basket for letter generation";
   if (token.id === "tier_plan") return "Silver / Gold / Diamond tier thresholds";
-  if (token.id === "materials_links") return "Links from letter materials";
-  if (token.id === "materials_snippets") return "Proof snippets from letter materials";
-  if (token.id === "approach_style") return "Selected outreach approach style";
+  if (token.id === "materials_links") return "Labeled links from letter inputs";
+  if (token.id === "key_messages") return "Key messages the sender wants incorporated";
   return token.label;
 }
 
@@ -531,7 +611,13 @@ export function previewPromptSegments(
 }
 export function normalizePrompts(raw: unknown): ChatPrompts | null {
   if (!raw || typeof raw !== "object") return null;
-  const obj = raw as { define?: unknown; find?: unknown; letter?: unknown; audit?: unknown };
+  const obj = raw as {
+    define?: unknown;
+    find?: unknown;
+    letter?: unknown;
+    audit?: unknown;
+    instantlyFind?: unknown;
+  };
   if (typeof obj.define !== "string" || typeof obj.find !== "string") return null;
   if (!obj.define.trim() || !obj.find.trim()) return null;
   const letter =
@@ -542,5 +628,9 @@ export function normalizePrompts(raw: unknown): ChatPrompts | null {
     typeof obj.audit === "string" && obj.audit.trim()
       ? obj.audit
       : DEFAULT_AUDIT_PROMPT;
-  return { define: obj.define, find: obj.find, letter, audit };
+  const instantlyFind =
+    typeof obj.instantlyFind === "string" && obj.instantlyFind.trim()
+      ? obj.instantlyFind
+      : DEFAULT_INSTANTLY_FIND_PROMPT;
+  return { define: obj.define, find: obj.find, letter, audit, instantlyFind };
 }

@@ -1,31 +1,20 @@
 import type {
-  ApproachStyle,
   LetterEmail,
+  LetterMaterialLink,
+  LetterMaterials,
   LetterResult,
   LetterTierName,
   LetterTierSequence,
   ProjectLetter,
 } from "./types";
 
-export const APPROACH_STYLES: ApproachStyle[] = [
-  "Direct",
-  "Consultative",
-  "Challenger",
-  "Warm",
-];
-
 export const LETTER_TIER_ORDER: LetterTierName[] = ["Silver", "Gold", "Diamond"];
 
 export function emptyProjectLetter(): ProjectLetter {
   return {
-    materials: { links: "", snippets: "" },
-    style: "Direct",
+    materials: { links: [], keyMessages: [] },
     result: null,
   };
-}
-
-function isApproachStyle(v: unknown): v is ApproachStyle {
-  return typeof v === "string" && (APPROACH_STYLES as string[]).includes(v);
 }
 
 function isTierName(v: unknown): v is LetterTierName {
@@ -51,12 +40,9 @@ function normalizeTier(raw: unknown): LetterTierSequence | null {
   return { tier: t.tier, emails: emails.slice(0, 3) };
 }
 
-export function normalizeLetterResult(
-  raw: unknown,
-  style: ApproachStyle
-): LetterResult | null {
+export function normalizeLetterResult(raw: unknown): LetterResult | null {
   if (!raw || typeof raw !== "object") return null;
-  const obj = raw as { tiers?: unknown; note?: unknown; style?: unknown };
+  const obj = raw as { tiers?: unknown; note?: unknown };
   if (!Array.isArray(obj.tiers)) return null;
 
   const byTier = new Map<LetterTierName, LetterTierSequence>();
@@ -76,7 +62,63 @@ export function normalizeLetterResult(
       typeof obj.note === "string" && obj.note.trim()
         ? obj.note.trim()
         : "Days are campaign days (Mon-Fri); stop the sequence for any prospect who replies.",
-    style: isApproachStyle(obj.style) ? obj.style : style,
+  };
+}
+
+function normalizeMaterialLink(raw: unknown): LetterMaterialLink | null {
+  if (typeof raw === "string") {
+    const url = raw.trim();
+    return url ? { url, label: "" } : null;
+  }
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as { url?: unknown; label?: unknown };
+  const url = typeof obj.url === "string" ? obj.url.trim() : "";
+  if (!url) return null;
+  return {
+    url,
+    label: typeof obj.label === "string" ? obj.label.trim() : "",
+  };
+}
+
+function normalizeLinks(raw: unknown): LetterMaterialLink[] {
+  if (typeof raw === "string") {
+    return raw
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((url) => ({ url, label: "" }));
+  }
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map(normalizeMaterialLink)
+    .filter((l): l is LetterMaterialLink => !!l);
+}
+
+function normalizeKeyMessages(raw: unknown): string[] {
+  if (typeof raw === "string") {
+    return raw
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+  }
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((m) => (typeof m === "string" ? m.trim() : ""))
+    .filter(Boolean);
+}
+
+export function normalizeMaterials(raw: unknown): LetterMaterials {
+  if (!raw || typeof raw !== "object") {
+    return { links: [], keyMessages: [] };
+  }
+  const obj = raw as {
+    links?: unknown;
+    keyMessages?: unknown;
+    snippets?: unknown;
+  };
+  return {
+    links: normalizeLinks(obj.links),
+    keyMessages: normalizeKeyMessages(obj.keyMessages),
   };
 }
 
@@ -84,24 +126,22 @@ export function normalizeProjectLetter(raw: unknown): ProjectLetter {
   const empty = emptyProjectLetter();
   if (!raw || typeof raw !== "object") return empty;
   const obj = raw as {
-    materials?: { links?: unknown; snippets?: unknown };
-    style?: unknown;
+    materials?: unknown;
     result?: unknown;
   };
-  const style = isApproachStyle(obj.style) ? obj.style : empty.style;
   return {
-    materials: {
-      links: typeof obj.materials?.links === "string" ? obj.materials.links : "",
-      snippets: typeof obj.materials?.snippets === "string" ? obj.materials.snippets : "",
-    },
-    style,
-    result: normalizeLetterResult(obj.result, style),
+    materials: normalizeMaterials(obj.materials),
+    result: normalizeLetterResult(obj.result),
   };
 }
 
-export function materialsLinksList(links: string): string[] {
-  return links
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean);
+export function materialsLinksList(links: LetterMaterialLink[]): string[] {
+  return links.map((l) => l.url.trim()).filter(Boolean);
+}
+
+export function formatMaterialLink(link: LetterMaterialLink): string {
+  const url = link.url.trim();
+  const label = link.label.trim();
+  if (!url) return "";
+  return label ? `${label}: ${url}` : url;
 }

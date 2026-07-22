@@ -310,7 +310,6 @@ export default function AudienceFind({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [pending, setPending] = useState<Proposal[]>([]);
-  const [typeFilter, setTypeFilter] = useState("All");
   /** Proposed basket before confirm (resolved rows). */
   const [proposed, setProposed] = useState<BasketItem[]>([]);
 
@@ -327,7 +326,7 @@ export default function AudienceFind({
     : "";
 
   function buildCandidatesByRole() {
-    const byRole = retrieveByRole(rows, fields, typeFilter);
+    const byRole = retrieveByRole(rows, fields);
     const payload: Partial<Record<AudienceRole, TaxRow[]>> = {};
     let total = 0;
     for (const role of AUDIENCE_ROLES) {
@@ -522,16 +521,6 @@ export default function AudienceFind({
         {onResetStage && (
           <StageReset blockedMessage={resetBlockedMessage ?? null} onReset={onResetStage} />
         )}
-
-        <select
-          value={typeFilter}
-          onChange={(e) => setTypeFilter(e.target.value)}
-          className="rounded-lg border border-line px-2 py-2 text-muted"
-        >
-          <option value="All">All</option>
-          <option value="B2B">B2B</option>
-          <option value="B2C">B2C</option>
-        </select>
 
         <button
           onClick={run}

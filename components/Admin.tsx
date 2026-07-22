@@ -11,6 +11,7 @@ import {
 } from "@/lib/fields";
 import {
   DEFAULT_AUDIT_PROMPT,
+  DEFAULT_INSTANTLY_FIND_PROMPT,
   DEFAULT_PROMPTS,
   availableTokens,
   syncPromptsToSchema,
@@ -31,6 +32,7 @@ function clonePrompts(prompts: ChatPrompts): ChatPrompts {
     find: prompts.find,
     letter: prompts.letter,
     audit: prompts.audit ?? DEFAULT_AUDIT_PROMPT,
+    instantlyFind: prompts.instantlyFind ?? DEFAULT_INSTANTLY_FIND_PROMPT,
   };
 }
 
@@ -73,6 +75,10 @@ export default function Admin({
   );
   const findTokens = useMemo(() => availableTokens("find", draftSchema), [draftSchema]);
   const letterTokens = useMemo(() => availableTokens("letter", draftSchema), [draftSchema]);
+  const instantlyFindTokens = useMemo(
+    () => availableTokens("instantlyFind", draftSchema),
+    [draftSchema]
+  );
 
   function touchSchema(next: FieldSchema) {
     const synced = syncPromptsToSchema(draftPrompts, next);
@@ -142,7 +148,8 @@ export default function Admin({
       !draftPrompts.define.trim() ||
       !draftPrompts.find.trim() ||
       !draftPrompts.letter.trim() ||
-      !draftPrompts.audit?.trim()
+      !draftPrompts.audit?.trim() ||
+      !draftPrompts.instantlyFind?.trim()
     ) {
       return;
     }
@@ -188,7 +195,8 @@ export default function Admin({
                 !draftPrompts.define.trim() ||
                 !draftPrompts.find.trim() ||
                 !draftPrompts.letter.trim() ||
-                !draftPrompts.audit?.trim()
+                !draftPrompts.audit?.trim() ||
+                !draftPrompts.instantlyFind?.trim()
               }
               className="rounded-lg border border-line px-3 py-1.5 text-muted hover:text-ink disabled:opacity-40"
             >
@@ -257,7 +265,7 @@ export default function Admin({
             <div>Chat data points</div>
             <div className="pt-1 text-muted">
               Categories and fields collected in Audience Define. Editing these updates the prompt
-              pills below — removed fields are dropped from prompts automatically.
+              inserts — removed fields are dropped from prompts automatically.
             </div>
           </div>
 
@@ -351,7 +359,7 @@ export default function Admin({
           </div>
         </section>
 
-        <section className="flex flex-col gap-8 border-t border-line pt-8">
+        <section className="flex flex-col gap-5 border-t border-line pt-8">
           <PromptEditor
             label="Audience Define prompt"
             description="System prompt for the define chat. Use dynamic inserts for live field state."
@@ -385,6 +393,15 @@ export default function Admin({
             value={draftPrompts.audit ?? DEFAULT_AUDIT_PROMPT}
             onChange={(audit) => touchPrompts({ ...draftPrompts, audit })}
             tokens={[]}
+            schema={draftSchema}
+            fields={fields}
+          />
+          <PromptEditor
+            label="Instantly Find prompt"
+            description="Translates Audience Define into Instantly SuperSearch search_filters JSON. Definition summary is filled at runtime."
+            value={draftPrompts.instantlyFind ?? DEFAULT_INSTANTLY_FIND_PROMPT}
+            onChange={(instantlyFind) => touchPrompts({ ...draftPrompts, instantlyFind })}
+            tokens={instantlyFindTokens}
             schema={draftSchema}
             fields={fields}
           />

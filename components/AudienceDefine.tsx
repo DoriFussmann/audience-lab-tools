@@ -43,10 +43,21 @@ export default function AudienceDefine({
   const [pending, setPending] = useState<Proposal[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [summaryOpen, setSummaryOpen] = useState(false);
   const settlements = useRef<string[]>([]);
   const fieldsRef = useRef(fields);
   fieldsRef.current = fields;
   const done = allDone(fields, schema);
+  const summary = done ? buildSummary(fields, schema) : "";
+
+  useEffect(() => {
+    if (!summaryOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setSummaryOpen(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [summaryOpen]);
   const byKey = fieldByKey(schema);
   const confirmedCount = schema.fields.filter(
     (f) => fields[f.key]?.status === "confirmed"
@@ -205,9 +216,15 @@ export default function AudienceDefine({
         onConfirmAll={onConfirmAll}
       />
       {done && (
-        <div className="flex flex-col gap-2 rounded-lg border border-line p-3">
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-line p-3">
           <div>Audience Define complete. Chat below to revise any data point.</div>
-          <CopyBox value={buildSummary(fields, schema)} />
+          <button
+            type="button"
+            onClick={() => setSummaryOpen(true)}
+            className="shrink-0 rounded-lg border border-line px-3 py-1.5 text-muted hover:text-ink"
+          >
+            Summary
+          </button>
         </div>
       )}
     </>
@@ -247,6 +264,35 @@ export default function AudienceDefine({
         <div className="pb-4 text-muted">Data Points</div>
         <DataPanel fields={fields} schema={schema} />
       </div>
+
+      {summaryOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-4"
+          onClick={() => setSummaryOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="define-summary-title"
+            className="flex w-full max-w-2xl flex-col gap-4 rounded-xl border border-line bg-white p-5 shadow-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div id="define-summary-title" className="text-ink">
+                Definition Summary
+              </div>
+              <button
+                type="button"
+                onClick={() => setSummaryOpen(false)}
+                className="rounded-lg border border-line px-2.5 py-1 text-[13px] text-muted hover:text-ink"
+              >
+                Close
+              </button>
+            </div>
+            <CopyBox value={summary} height="h-[min(28rem,60vh)]" />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

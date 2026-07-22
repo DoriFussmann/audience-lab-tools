@@ -209,7 +209,7 @@ export default function Dashboard({
     : "No audience basket confirmed";
 
   const letterMeta = letterDone
-    ? `${letter.result!.style} · ${emailCount} emails${
+    ? `${emailCount} emails${
         materialLinks.length ? ` · ${materialLinks.length} links` : ""
       }`
     : "No sequences generated";
@@ -318,11 +318,7 @@ export default function Dashboard({
           {letterDone && letter.result && (
             <div className="scroll-thin max-h-72 overflow-y-auto">
               <div className="flex flex-col gap-2 text-muted">
-                <div>
-                  <span className="text-ink">{letter.result.style}</span>
-                  {" · "}
-                  {emailCount} emails
-                </div>
+                <div className="text-ink">{emailCount} emails</div>
                 {letter.result.tiers.map((tier) => (
                   <div key={tier.tier} className="border-t border-line pt-2">
                     <div className="text-ink">{tier.tier}</div>

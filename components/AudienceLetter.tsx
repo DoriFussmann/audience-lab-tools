@@ -4,15 +4,14 @@ import { useState, type ReactNode } from "react";
 import LoadingModal from "./LoadingModal";
 import StageReset from "./StageReset";
 import { allDone, type FieldSchema } from "@/lib/fields";
-import { APPROACH_STYLES } from "@/lib/letter";
 import {
   buildAudienceKit,
   buildLetterCopyAll,
 } from "@/lib/summary";
 import type {
-  ApproachStyle,
   FieldMap,
   LetterEmail,
+  LetterMaterialLink,
   LetterResult,
   LetterTierName,
   LetterTierSequence,
@@ -156,6 +155,8 @@ function slugFilename(name: string) {
   );
 }
 
+const EMPTY_LINK: LetterMaterialLink = { url: "", label: "" };
+
 export default function AudienceLetter({
   projectName,
   fields,
@@ -179,7 +180,7 @@ export default function AudienceLetter({
   resetBlockedMessage?: string | null;
   onResetStage?: () => void;
 }) {
-  const [materialsOpen, setMaterialsOpen] = useState(false);
+  const [inputsOpen, setInputsOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [busyMessage, setBusyMessage] = useState("Generating emails…");
   const [error, setError] = useState("");
@@ -195,16 +196,68 @@ export default function AudienceLetter({
   const findDone = !!audience?.basket?.length;
   const ready = defineDone && findDone;
   const result = letter.result;
+  const links = letter.materials.links.length
+    ? letter.materials.links
+    : [EMPTY_LINK];
+  const keyMessages = letter.materials.keyMessages.length
+    ? letter.materials.keyMessages
+    : [""];
 
-  function updateMaterials(patch: Partial<ProjectLetter["materials"]>) {
+  function setLinks(next: LetterMaterialLink[]) {
     setLetter((prev) => ({
       ...prev,
-      materials: { ...prev.materials, ...patch },
+      materials: { ...prev.materials, links: next },
     }));
   }
 
-  function setStyle(style: ApproachStyle) {
-    setLetter((prev) => ({ ...prev, style }));
+  function setKeyMessages(next: string[]) {
+    setLetter((prev) => ({
+      ...prev,
+      materials: { ...prev.materials, keyMessages: next },
+    }));
+  }
+
+  function updateLink(index: number, patch: Partial<LetterMaterialLink>) {
+    const base = letter.materials.links.length
+      ? [...letter.materials.links]
+      : [{ ...EMPTY_LINK }];
+    base[index] = { ...base[index], ...patch };
+    setLinks(base);
+  }
+
+  function addLink() {
+    setLinks([...(letter.materials.links.length ? letter.materials.links : [{ ...EMPTY_LINK }]), { ...EMPTY_LINK }]);
+  }
+
+  function removeLink(index: number) {
+    const base = letter.materials.links.length
+      ? [...letter.materials.links]
+      : [{ ...EMPTY_LINK }];
+    const next = base.filter((_, i) => i !== index);
+    setLinks(next.length ? next : []);
+  }
+
+  function updateKeyMessage(index: number, value: string) {
+    const base = letter.materials.keyMessages.length
+      ? [...letter.materials.keyMessages]
+      : [""];
+    base[index] = value;
+    setKeyMessages(base);
+  }
+
+  function addKeyMessage() {
+    setKeyMessages([
+      ...(letter.materials.keyMessages.length ? letter.materials.keyMessages : [""]),
+      "",
+    ]);
+  }
+
+  function removeKeyMessage(index: number) {
+    const base = letter.materials.keyMessages.length
+      ? [...letter.materials.keyMessages]
+      : [""];
+    const next = base.filter((_, i) => i !== index);
+    setKeyMessages(next.length ? next : []);
   }
 
   async function generate(opts?: { feedback?: string }) {
@@ -214,6 +267,13 @@ export default function AudienceLetter({
       const ok = window.confirm("Replace the current letter sequences?");
       if (!ok) return;
     }
+
+    const materials = {
+      links: letter.materials.links.filter((l) => l.url.trim()),
+      keyMessages: letter.materials.keyMessages
+        .map((m) => m.trim())
+        .filter(Boolean),
+    };
 
     setBusyMessage(revision ? "Rewriting emails…" : "Generating emails…");
     setBusy(true);
@@ -225,8 +285,7 @@ export default function AudienceLetter({
         body: JSON.stringify({
           fields,
           audience,
-          materials: letter.materials,
-          style: letter.style,
+          materials,
           schema,
           prompt,
           ...(revision
@@ -237,7 +296,7 @@ export default function AudienceLetter({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Request failed");
       const next = data.result as LetterResult;
-      setLetter((prev) => ({ ...prev, result: next, style: next.style || prev.style }));
+      setLetter((prev) => ({ ...prev, result: next }));
       setOpenTiers({ Silver: false, Gold: false, Diamond: false });
       if (revision) setFeedback("");
     } catch (e) {
@@ -354,58 +413,90 @@ export default function AudienceLetter({
         <div className="overflow-hidden rounded-xl border border-line bg-white">
           <button
             type="button"
-            onClick={() => setMaterialsOpen((v) => !v)}
+            onClick={() => setInputsOpen((v) => !v)}
             className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-soft"
           >
             <span className="flex min-w-0 flex-col gap-0.5">
-              <span className="text-ink">Materials</span>
+              <span className="text-ink">Inputs & Links</span>
               <span className="text-muted">optional</span>
             </span>
-            <Chevron open={materialsOpen} />
+            <Chevron open={inputsOpen} />
           </button>
-          <ExpandPanel open={materialsOpen} className="flex flex-col gap-3 border-t border-line px-4 py-3">
-            <label className="flex flex-col gap-1.5">
+          <ExpandPanel open={inputsOpen} className="flex flex-col gap-4 border-t border-line px-4 py-3">
+            <div className="flex flex-col gap-2">
               <span className="text-muted">Links</span>
-              <textarea
-                value={letter.materials.links}
-                onChange={(e) => updateMaterials({ links: e.target.value })}
-                rows={3}
-                placeholder={"https://…\none URL per line"}
-                className="scroll-thin w-full resize-y rounded-lg border border-line bg-white px-3 py-2 text-ink"
-              />
-            </label>
-            <label className="flex flex-col gap-1.5">
-              <span className="text-muted">Snippets</span>
-              <textarea
-                value={letter.materials.snippets}
-                onChange={(e) => updateMaterials({ snippets: e.target.value })}
-                rows={4}
-                placeholder="Testimonials, stats, client names"
-                className="scroll-thin w-full resize-y rounded-lg border border-line bg-white px-3 py-2 text-ink"
-              />
-            </label>
+              {links.map((link, i) => (
+                <div key={i} className="flex flex-col gap-1.5 sm:flex-row sm:items-center">
+                  <input
+                    type="url"
+                    value={link.url}
+                    onChange={(e) => updateLink(i, { url: e.target.value })}
+                    placeholder="https://…"
+                    className="w-full rounded-lg border border-line bg-white px-3 py-2 text-ink sm:min-w-0 sm:flex-1"
+                  />
+                  <input
+                    type="text"
+                    value={link.label}
+                    onChange={(e) => updateLink(i, { label: e.target.value })}
+                    placeholder="What it is"
+                    className="w-full rounded-lg border border-line bg-white px-3 py-2 text-ink sm:w-44 sm:shrink-0"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeLink(i)}
+                    className="rounded-lg border border-line px-2.5 py-2 text-muted hover:text-ink sm:shrink-0"
+                    aria-label="Remove link"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <div>
+                <button
+                  type="button"
+                  onClick={addLink}
+                  className="rounded-lg border border-line px-3 py-1.5 text-muted hover:text-ink"
+                >
+                  Add link
+                </button>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <span className="text-muted">Key messages</span>
+              {keyMessages.map((message, i) => (
+                <div key={i} className="flex flex-col gap-1.5 sm:flex-row sm:items-start">
+                  <textarea
+                    value={message}
+                    onChange={(e) => updateKeyMessage(i, e.target.value)}
+                    rows={2}
+                    placeholder="Statement to include in the emails"
+                    className="scroll-thin w-full resize-y rounded-lg border border-line bg-white px-3 py-2 text-ink sm:min-w-0 sm:flex-1"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeKeyMessage(i)}
+                    className="rounded-lg border border-line px-2.5 py-2 text-muted hover:text-ink sm:shrink-0"
+                    aria-label="Remove key message"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <div>
+                <button
+                  type="button"
+                  onClick={addKeyMessage}
+                  className="rounded-lg border border-line px-3 py-1.5 text-muted hover:text-ink"
+                >
+                  Add key message
+                </button>
+              </div>
+            </div>
           </ExpandPanel>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {APPROACH_STYLES.map((style) => {
-            const active = letter.style === style;
-            return (
-              <button
-                key={style}
-                type="button"
-                onClick={() => setStyle(style)}
-                className={
-                  "rounded-lg border px-3 py-1.5 " +
-                  (active
-                    ? "border-line bg-soft text-ink"
-                    : "border-line text-muted hover:text-ink")
-                }
-              >
-                {style}
-              </button>
-            );
-          })}
           <button
             type="button"
             onClick={() => void generate()}
